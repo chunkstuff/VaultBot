@@ -1,0 +1,489 @@
+import json
+import asyncio
+from typing import Optional
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from utils.logger_factory import setup_logger
+from core.events.playlist_events import PlaylistCompleteEvent
+from .playlist_tracking_db_helpers import (
+    find_candidate_playlists_by_first_item,
+    get_playlist_track_at_index,
+    upsert_playlist_session,
+    record_file_completion,
+    mark_session_complete,
+    get_track_runtime,
+    get_playlist_length,
+    get_playlist_info,
+    calculate_session_listen_time,
+    get_order_index_for_item,
+)
+from .session_state import SessionState
+from .session_event_dispatcher import SessionEventDispatcher
+
+logger = setup_logger(__name__)
+
+# Heuristic thresholds
+TICKS_PER_SECOND = 10_000_000
+FINISH_THRESHOLD_SECS = 60
+ORDER_ADVANCE_MIN_SECS = 10  # Minimum absolute threshold (for very short tracks)
+ORDER_ADVANCE_PERCENTAGE = 0.67  # Must listen to at least 67% (2/3) of track to count as completion
+COMPLETION_PERCENTAGE = 0.90  # 90% through track counts as completion for final track
+MAX_EVENT_DELAY_SECONDS = 300  # Maximum delay for event emission (5 minutes)
+SEED_TIME_GUARD_SECONDS = 30
+
+class PlaylistIncrementProcessor:
+    """Handles processing of individual playlist increments"""
+    
+    def __init__(self, vault_db, event_dispatcher: SessionEventDispatcher):
+        self.vault_db = vault_db
+        self.event_dispatcher = event_dispatcher
+        self._background_tasks: set = set()
+
+    def _schedule_background_task(self, coro):
+        """Schedule a background task and track it for cleanup"""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        # Clean up completed tasks automatically
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    async def cleanup_background_tasks(self):
+        """Cancel all pending background tasks (call during shutdown)"""
+        if self._background_tasks:
+            logger.info(f"[PlaylistTracker] Cancelling {len(self._background_tasks)} background tasks...")
+            for task in self._background_tasks:
+                if not task.done():
+                    task.cancel()
+            
+            # Wait for all tasks to complete/cancel
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            self._background_tasks.clear()
+            logger.info("[PlaylistTracker] Background tasks cleaned up")
+
+    # In PlaylistIncrementProcessor class, change this method:
+    async def process_increment(self, discord_id: str, jellyfin_user_id: str, 
+                              item_id: str, secs: int, 
+                              current_state: Optional[SessionState]) -> Optional[SessionState]:
+        """
+        Process a single increment for a user. Returns updated state or None if session ended.
+        """
+        if not current_state:
+            return await self._handle_session_seed(discord_id, jellyfin_user_id, item_id, secs)  # Add secs parameter
+        
+        return await self._handle_existing_session(discord_id, jellyfin_user_id, item_id, secs, current_state)
+
+    async def _handle_session_seed(self, discord_id: str, jellyfin_user_id: str, 
+                                 item_id: str, initial_secs: int) -> Optional[SessionState]:  # Add initial_secs parameter
+        """Handle seeding a new session when no current state exists"""
+        candidates = await find_candidate_playlists_by_first_item(
+            self.vault_db, discord_id, item_id
+        )
+        if not candidates:
+            return None
+            
+        chosen = candidates[0]
+        user_playlist_id = int(chosen["user_playlist_id"])
+        total_runtime = await self._get_playlist_total_runtime(user_playlist_id)
+        jf_playlist_id = await self._get_jellyfin_playlist_id(user_playlist_id)
+        auto_confirm = (len(candidates) == 1)
+
+        # Apply seeding guard: only credit initial time if within reasonable startup window
+        credited_initial_time = initial_secs if initial_secs <= SEED_TIME_GUARD_SECONDS else 0
+        
+        if credited_initial_time != initial_secs:
+            logger.debug(
+                f"[PlaylistTracker] {discord_id} seed guard applied: detected at {initial_secs}s "
+                f"(> {SEED_TIME_GUARD_SECONDS}s guard), starting from 0s instead"
+            )
+
+        state = SessionState(
+            session_id=None,
+            user_playlist_id=user_playlist_id,
+            jf_playlist_id=jf_playlist_id,
+            current_index=0,
+            is_confirmed=auto_confirm,
+            current_item_id=item_id,
+            seconds_accum=credited_initial_time,  # Use guarded time
+            playlist_length=None,
+            playlist_total_runtime=total_runtime,
+            second_expected=chosen.get("second"),
+            jellyfin_user_id=jellyfin_user_id,
+        )
+
+        # Auto-confirm and persist if only one candidate
+        if auto_confirm:
+            state.session_id = await upsert_playlist_session(
+                self.vault_db, discord_id, state.user_playlist_id,
+                state.jf_playlist_id, state.current_index, state.is_confirmed
+            )
+            logger.info(
+                f"[PlaylistSessionTracker] Auto-confirmed unique seed for {discord_id} "
+                f"(playlist {state.user_playlist_id} @ index 0) with {credited_initial_time}s initial time"
+            )
+
+        await self.event_dispatcher.emit_playlist_start(discord_id, state, item_id)
+        logger.info(
+            f"[PlaylistSessionTracker] Seeded session for {discord_id} with playlist {state.user_playlist_id} "
+            f"starting with {credited_initial_time}s accumulated time (detected at {initial_secs}s)"
+        )
+        
+        return state
+
+    async def _handle_existing_session(self, discord_id: str, jellyfin_user_id: str,
+                                     item_id: str, secs: int, 
+                                     state: SessionState) -> Optional[SessionState]:
+        """Handle increment for existing session"""
+        
+        # Check if user switched away from tracked playlist (only applies once confirmed)
+        if state.is_confirmed:
+            playlist_items = await self._get_all_playlist_items(state.user_playlist_id)
+            if item_id not in playlist_items:
+                await self.event_dispatcher.emit_switch_away(discord_id, state, item_id)
+                logger.info(f"[PlaylistSessionTracker] {discord_id} switched away from playlist {state.user_playlist_id}, ending session")
+                return None
+
+        # Same item - just accumulate time
+        if state.current_item_id == item_id:
+            return await self._handle_same_item_increment(discord_id, state, secs)
+        
+        # Different item - check if advancing or jumping
+        return await self._handle_item_change(discord_id, jellyfin_user_id, item_id, secs, state)
+
+    async def _handle_same_item_increment(self, discord_id: str, state: SessionState, 
+                                        secs: int) -> SessionState:
+        """Handle time accumulation on the same item"""
+        state.seconds_accum += secs
+        
+        # Get track count if we don't have it yet
+        if not state.playlist_length:
+            state.playlist_length = await get_playlist_length(self.vault_db, state.user_playlist_id)
+        
+        # Check if we've completed the final track
+        if (state.is_confirmed and state.playlist_length and 
+            state.current_index >= (state.playlist_length - 1)):
+            
+            completion_threshold = await self._calculate_completion_threshold(state.current_item_id)
+            
+            if state.seconds_accum >= completion_threshold:
+                logger.debug(
+                    f"[PlaylistTracker] {discord_id} reached completion threshold on final track "
+                    f"({state.seconds_accum:.1f}s >= {completion_threshold:.1f}s)"
+                )
+                await self._finalize_if_complete(discord_id, state, state.playlist_length)
+                return None  # Session completed and cleaned up
+        
+        return state
+
+    async def _handle_item_change(self, discord_id: str, jellyfin_user_id: str,
+                                item_id: str, secs: int, state: SessionState) -> Optional[SessionState]:
+        """Handle when the current item changes"""
+        next_idx = state.current_index + 1
+        expected_next = await get_playlist_track_at_index(
+            self.vault_db, state.user_playlist_id, next_idx
+        )
+
+        if expected_next and expected_next == item_id:
+            return await self._handle_sequential_advance(discord_id, item_id, state, secs, next_idx)
+        else:
+            return await self._handle_non_sequential_jump(discord_id, jellyfin_user_id, item_id, secs, state)
+
+    async def _handle_sequential_advance(self, discord_id: str, item_id: str,
+                                       state: SessionState, new_track_secs: int, next_idx: int) -> SessionState:
+        """
+        Handle advancing to the next expected track.
+        Determines if previous track should count as "completed" or "skipped" based on listen time.
+        """
+        # Calculate dynamic threshold using helper method
+        advance_threshold = await self._calculate_advance_threshold(state.current_item_id)
+        
+        if state.seconds_accum >= advance_threshold:
+            # User listened to enough of the track - count as completion
+            await self._process_track_completion(discord_id, state, next_idx, item_id, True, new_track_secs)
+            logger.debug(
+                f"[PlaylistTracker] {discord_id} completed track {state.current_index} "
+                f"({state.seconds_accum:.1f}s >= {advance_threshold:.1f}s threshold)"
+            )
+        else:
+            # User didn't listen to enough - count as skip
+            await self._process_track_completion(discord_id, state, next_idx, item_id, False, new_track_secs)
+            logger.debug(
+                f"[PlaylistTracker] {discord_id} skipped track {state.current_index} "
+                f"({state.seconds_accum:.1f}s < {advance_threshold:.1f}s threshold)"
+            )
+        
+        return state
+
+    async def _handle_non_sequential_jump(self, discord_id: str, jellyfin_user_id: str,
+                                        item_id: str, secs: int, state: SessionState) -> Optional[SessionState]:
+        """Handle jumping to a non-sequential track"""
+        if state.is_confirmed or state.current_index > 0:
+            new_idx = await get_order_index_for_item(self.vault_db, state.user_playlist_id, item_id)
+            
+            if new_idx is None:
+                # Outside playlist - switch away
+                await self.event_dispatcher.emit_switch_away(discord_id, state, item_id)
+                logger.info(f"[PlaylistSessionTracker] {discord_id} jumped to item outside playlist, ending session")
+                return None
+            
+            # Jump within playlist - apply time guard for the new track
+            credited_jump_time = secs if secs <= SEED_TIME_GUARD_SECONDS else 0
+            
+            if credited_jump_time != secs:
+                logger.debug(
+                    f"[PlaylistTracker] {discord_id} jump guard applied: detected at {secs}s "
+                    f"(> {SEED_TIME_GUARD_SECONDS}s guard), starting from 0s instead"
+                )
+            
+            await self._process_playlist_jump(discord_id, state, new_idx, item_id, credited_jump_time)
+            return state
+        else:
+            # Unconfirmed first track jumping to unexpected - reset
+            logger.info(f"[PlaylistTracker] {discord_id} jumped to unexpected track, resetting session")
+            return None
+
+    async def _process_track_completion(self, discord_id: str, state: SessionState,
+                                      next_idx: int, item_id: str, is_completion: bool,
+                                      initial_new_track_secs: int):
+        """Process track advancement with or without completion"""
+        # Confirm session if needed
+        was_unconfirmed_first = (state.current_index == 0 and not state.is_confirmed)
+        state.is_confirmed = state.is_confirmed or was_unconfirmed_first
+
+        if not state.playlist_length:
+            state.playlist_length = await get_playlist_length(self.vault_db, state.user_playlist_id)
+
+        # Ensure session exists
+        state.session_id = await upsert_playlist_session(
+            self.vault_db, discord_id, state.user_playlist_id,
+            state.jf_playlist_id, state.current_index, state.is_confirmed
+        )
+
+        # Calculate the time to record and delay needed
+        time_to_record = state.seconds_accum
+
+        if is_completion and state.seconds_accum > 0:
+            track_runtime = await get_track_runtime(self.vault_db, state.current_item_id)
+            completion_threshold = track_runtime * COMPLETION_PERCENTAGE
+            time_to_record = min(state.seconds_accum, track_runtime)
+            
+            # If they listened to 90%+ of the track, record the full track time
+            if state.seconds_accum >= completion_threshold:
+                time_to_record = track_runtime
+                logger.debug(
+                    f"[PlaylistTracker] {discord_id} completed track {state.current_index} "
+                    f"({state.seconds_accum:.1f}s/{track_runtime:.1f}s) - crediting full track time"
+                )
+            else:
+                # User listened to 67%+ but < 90% - guard against over-time
+                if time_to_record != state.seconds_accum:
+                    logger.debug(
+                        f"[PlaylistTracker] {discord_id} time guard applied: "
+                        f"capping {state.seconds_accum:.1f}s to track runtime {track_runtime:.1f}s"
+                    )
+                logger.debug(
+                    f"[PlaylistTracker] {discord_id} completed track {state.current_index} "
+                    f"({time_to_record:.1f}s/{track_runtime:.1f}s) - standard completion"
+                )
+
+        # Record time on previous track
+        if time_to_record > 0:
+            await record_file_completion(
+                self.vault_db, state.session_id,
+                state.current_item_id, state.current_index, time_to_record
+            )
+
+        # Store previous state for event
+        prev_secs = state.seconds_accum
+        prev_item = state.current_item_id
+        prev_index = state.current_index
+
+        # Update state
+        state.current_index = next_idx
+        state.current_item_id = item_id
+        state.seconds_accum = initial_new_track_secs
+
+        # Update DB
+        await upsert_playlist_session(
+            self.vault_db, discord_id, state.user_playlist_id,
+            state.jf_playlist_id, state.current_index, state.is_confirmed
+        )
+
+        if is_completion:
+            await self.event_dispatcher.emit_track_advance(
+                discord_id, state, prev_index, prev_item, time_to_record, item_id
+            )
+            logger.info(f"[PlaylistSessionTracker] {discord_id} advanced to track {next_idx}")
+        else:
+            await self.event_dispatcher.emit_track_jump(
+                discord_id, state, prev_index, prev_item, prev_secs, item_id
+            )
+            logger.info(f"[PlaylistSessionTracker] {discord_id} skipped to track {next_idx}")
+
+    async def _process_playlist_jump(self, discord_id: str, state: SessionState,
+                                   new_idx: int, item_id: str, new_track_secs: int = 0):
+        """Process jumping within the playlist"""
+        if not state.playlist_length:
+            state.playlist_length = await get_playlist_length(self.vault_db, state.user_playlist_id)
+
+        # Update session
+        state.session_id = await upsert_playlist_session(
+            self.vault_db, discord_id, state.user_playlist_id,
+            state.jf_playlist_id, new_idx, state.is_confirmed
+        )
+
+        # Store previous state for event
+        prev_index = state.current_index
+        prev_item = state.current_item_id
+        prev_secs = state.seconds_accum
+
+        # Update state
+        state.current_index = new_idx
+        state.current_item_id = item_id
+        state.seconds_accum = new_track_secs
+
+        await self.event_dispatcher.emit_track_advance(
+            discord_id, state, prev_index, prev_item, prev_secs, item_id
+        )
+
+        logger.info(f"[PlaylistSessionTracker] {discord_id} jumped within playlist to index {new_idx}")
+
+    async def _finalize_if_complete(self, discord_id: str, state: SessionState, 
+                                  total_tracks: int) -> bool:
+        """Check if user completed the playlist"""
+        if not state.is_confirmed:
+            return False
+        
+        # Use dynamic completion threshold
+        completion_threshold = await self._calculate_completion_threshold(state.current_item_id)
+        
+        if (state.current_index >= (total_tracks - 1) and 
+            state.seconds_accum >= completion_threshold):
+            
+            if state.session_id:
+                # For final track completion, also use full track time if 95%+ listened
+                track_runtime = await get_track_runtime(self.vault_db, state.current_item_id)
+                time_to_record = track_runtime if state.seconds_accum >= completion_threshold else state.seconds_accum
+                delay_seconds = min(max(0, track_runtime - state.seconds_accum), MAX_EVENT_DELAY_SECONDS) if state.seconds_accum >= completion_threshold else 0
+                should_delay_completion = state.seconds_accum >= completion_threshold
+                
+                await record_file_completion(
+                    self.vault_db, state.session_id, state.current_item_id, 
+                    state.current_index, time_to_record
+                )
+                await mark_session_complete(self.vault_db, state.session_id)
+
+                # Wait for the track to "finish" ONLY if we're crediting extra time (non-blocking)
+                if should_delay_completion and delay_seconds > 0:
+                    logger.debug(f"[PlaylistTracker] Scheduling delayed playlist completion for {discord_id} in {delay_seconds:.1f}s")
+                    # Create background task for delayed playlist completion - track it for cleanup
+                    self._schedule_background_task(self._emit_delayed_playlist_completion(
+                        discord_id, state, total_tracks, delay_seconds
+                    ))
+                else:
+                    # Immediate playlist completion event
+                    await self._emit_completion_event(discord_id, state, total_tracks)
+                
+                completion_type = "with time credit (delayed)" if should_delay_completion else "standard (immediate)"
+                logger.info(
+                    f"[PlaylistSessionTracker] {discord_id} completed playlist {state.user_playlist_id} "
+                    f"({completion_type}) after {state.seconds_accum:.1f}s on final track "
+                    f"(threshold: {completion_threshold:.1f}s) - recorded {time_to_record:.1f}s"
+                )
+                return True
+        return False
+
+    async def _emit_completion_event(self, discord_id: str, state: SessionState, total_tracks: int):
+        """Emit playlist completion event"""
+        if not self.event_dispatcher.dispatch:
+            return
+            
+        try:
+            playlist_info = await get_playlist_info(self.vault_db, state.user_playlist_id)
+            discord_info = await self.event_dispatcher.link_map.get_discord_info(state.jellyfin_user_id)
+            jf_playlist_id = await self._get_jellyfin_playlist_id(state.user_playlist_id)
+            total_listen_time = await calculate_session_listen_time(self.vault_db, state.session_id)
+            
+            complete_event = PlaylistCompleteEvent(
+                discord_user_id=discord_id,
+                discord_username=discord_info[1] if discord_info else "Unknown",
+                jellyfin_user_id=state.jellyfin_user_id,
+                playlist_id=jf_playlist_id,
+                playlist_session_id=state.session_id,
+                user_playlist_id=state.user_playlist_id,
+                playlist_name=playlist_info.get("playlist_name", "Unknown"),
+                total_tracks=total_tracks,
+                completed_tracks=state.current_index + 1,
+                completion_time=datetime.now(ZoneInfo("Europe/London")),
+                listen_duration=total_listen_time
+            )
+            
+            self.event_dispatcher.dispatch('playlist_complete', complete_event)
+        except Exception as e:
+            logger.error(f'[PlaylistTracker] completion event emit failed: {e}')
+
+    async def _emit_delayed_playlist_completion(self, discord_id: str, state: SessionState,
+                                              total_tracks: int, delay_seconds: float):
+        """Emit playlist completion event after a delay (runs in background)"""
+        try:
+            await asyncio.sleep(delay_seconds)
+            await self._emit_completion_event(discord_id, state, total_tracks)
+            logger.info(f"[PlaylistSessionTracker] {discord_id} delayed playlist completion event emitted (after {delay_seconds:.1f}s)")
+        except Exception as e:
+            logger.error(f"[PlaylistTracker] Failed to emit delayed playlist completion for {discord_id}: {e}")
+
+    async def _calculate_completion_threshold(self, item_id: str, percentage: float = COMPLETION_PERCENTAGE) -> float:
+        """Calculate dynamic completion threshold based on track runtime"""
+        track_runtime = await get_track_runtime(self.vault_db, item_id)
+        return track_runtime * percentage
+
+    async def _calculate_advance_threshold(self, item_id: str) -> float:
+        """
+        Calculate dynamic advance threshold for track completion.
+        When user advances to next track, we check if they listened to enough of the previous track
+        to count it as "completed" vs "skipped". Requires 2/3 of track OR 10 seconds minimum.
+        """
+        track_runtime = await get_track_runtime(self.vault_db, item_id)
+        percentage_threshold = track_runtime * ORDER_ADVANCE_PERCENTAGE
+        return max(ORDER_ADVANCE_MIN_SECS, percentage_threshold)
+
+    async def _get_playlist_total_runtime(self, user_playlist_id: int) -> float:
+        """Get total runtime of all tracks in playlist (in seconds)"""
+        rows = await self.vault_db.query("""
+            SELECT metadata_json 
+            FROM playlist_items pi
+            JOIN items i ON pi.item_id = i.id
+            WHERE pi.user_playlist_id = ?
+        """, (user_playlist_id,))
+        
+        total_ticks = 0
+        for row in rows:
+            if row["metadata_json"]:
+                try:
+                    metadata = json.loads(row["metadata_json"])
+                    runtime_ticks = metadata.get("RunTimeTicks", 0)
+                    total_ticks += runtime_ticks
+                except json.JSONDecodeError:
+                    logger.warning(f"Invalid JSON in metadata for playlist {user_playlist_id}")
+                    continue
+        
+        return total_ticks / TICKS_PER_SECOND
+
+    async def _get_jellyfin_playlist_id(self, user_playlist_id: int) -> Optional[str]:
+        """Get Jellyfin playlist ID from user playlist"""
+        rows = await self.vault_db.query("""
+            SELECT DISTINCT pi.jf_playlist_id 
+            FROM playlist_items pi 
+            WHERE pi.user_playlist_id = ? 
+            AND pi.jf_playlist_id IS NOT NULL
+            LIMIT 1
+        """, (user_playlist_id,))
+        
+        return rows[0]["jf_playlist_id"] if rows else None
+
+    async def _get_all_playlist_items(self, user_playlist_id: int) -> set[str]:
+        """Get all item IDs for a playlist"""
+        rows = await self.vault_db.query("""
+            SELECT item_id FROM playlist_items 
+            WHERE user_playlist_id = ?
+        """, (user_playlist_id,))
+        return {row["item_id"] for row in rows}
