@@ -1,3 +1,5 @@
+# core/bot/cogs/makemeworseplus/playlist_tracking.py - Only showing updated sections
+
 import traceback
 import asyncio
 from typing import Dict, Any, Optional
@@ -6,6 +8,7 @@ from .session_state import SessionState
 from .session_event_dispatcher import SessionEventDispatcher
 from .session_incrementor import PlaylistIncrementProcessor, TICKS_PER_SECOND
 from .session_abandon import SessionAbandonmentTracker
+
 logger = setup_logger(__name__)
 
 
@@ -24,8 +27,6 @@ class PlaylistSessionTracker:
         self.event_dispatcher = SessionEventDispatcher(dispatch, link_map, vault_db)
         self.increment_processor = PlaylistIncrementProcessor(vault_db, self.event_dispatcher)
         self.abandonment_tracker = SessionAbandonmentTracker(self.event_dispatcher, vault_db)
-
-
 
     async def process_buffer_deltas(self, buffer_deltas: list[tuple[str, str, int]]):
         """Process session deltas from BufferManager"""

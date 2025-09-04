@@ -107,3 +107,48 @@ class PlaylistSessionAbandonedEvent:
     abandoned_at: datetime
     last_item_title: Optional[str] = None
     session_id: Optional[int] = None
+
+@dataclass
+class PlaylistSessionPausedEvent:
+    """Emitted when a user's session is paused (5 minutes absent)"""
+    discord_user_id: str
+    discord_username: str
+    jellyfin_user_id: str
+    user_playlist_id: int
+    playlist_name: str
+    current_index: int
+    current_item_id: str
+    paused_at: datetime
+    minutes_absent: float
+    current_item_title: Optional[str] = None
+    session_id: Optional[int] = None
+
+@dataclass
+class PlaylistSessionResumedEvent:
+    """Emitted when a user resumes their session after being paused/waiting"""
+    discord_user_id: str
+    discord_username: str
+    jellyfin_user_id: str
+    user_playlist_id: int
+    playlist_name: str
+    current_index: int
+    current_item_id: str
+    resumed_at: datetime
+    minutes_away: float
+    current_item_title: Optional[str] = None
+    session_id: Optional[int] = None
+
+@dataclass
+class PlaylistSessionWaitingEvent:
+    """Emitted when a user's session is waiting for abandonment (15+ minutes absent)"""
+    discord_user_id: str
+    discord_username: str
+    jellyfin_user_id: str
+    user_playlist_id: int
+    playlist_name: str
+    current_index: int
+    current_item_id: str
+    waiting_at: datetime
+    minutes_absent: float
+    current_item_title: Optional[str] = None
+    session_id: Optional[int] = None

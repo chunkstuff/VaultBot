@@ -15,6 +15,9 @@ from core.events.playlist_events import (
     PlaylistSwitchAwayEvent,
     PlaylistTrackJumpEvent,
     PlaylistSessionAbandonedEvent,
+    PlaylistSessionPausedEvent,
+    PlaylistSessionWaitingEvent,
+    PlaylistSessionResumedEvent,
 )
 from .embeds import (
     create_playlist_embed,
@@ -24,6 +27,9 @@ from .embeds import (
     create_switch_away_embed,
     create_track_jump_embed,
     create_session_abandoned_embed,
+    create_session_paused_embed,
+    create_session_waiting_embed,
+    create_session_resumed_embed,
 )
 from .playlist_deletion import delete_playlist
 from .playlist_tracking_db_helpers import (
@@ -55,6 +61,9 @@ class PlaylistListeners(commands.Cog):
             'jump': MessageStrategy(should_replace=True, should_cleanup=False),
             'switch_away': MessageStrategy(should_replace=False, should_cleanup=False),
             'abandoned': MessageStrategy(should_replace=False, should_cleanup=True),
+            'paused': MessageStrategy(should_replace=True, should_cleanup=False),
+            'waiting': MessageStrategy(should_replace=True, should_cleanup=False),
+            'resumed': MessageStrategy(should_replace=True, should_cleanup=False),
         }
 
     async def _get_user_avatar_url(self, discord_user_id: str) -> Optional[str]:
@@ -251,4 +260,34 @@ class PlaylistListeners(commands.Cog):
             embed_creator=create_session_abandoned_embed,
             strategy_key='abandoned',
             log_message=f"Session abandoned: playlist {event.playlist_name} at {event.last_index + 1} by {event.discord_username}"
+        )
+
+    @commands.Cog.listener()
+    async def on_playlist_session_paused(self, event: PlaylistSessionPausedEvent):
+        """Handle playlist session paused events (5 minutes absent)"""
+        await self._handle_playlist_runtime_event(
+            event=event,
+            embed_creator=create_session_paused_embed,
+            strategy_key='paused',
+            log_message=f"Session paused: {event.playlist_name} by {event.discord_username} (5 min absent)"
+        )
+
+    @commands.Cog.listener()
+    async def on_playlist_session_waiting(self, event: PlaylistSessionWaitingEvent):
+        """Handle playlist session waiting events (15+ minutes absent)"""
+        await self._handle_playlist_runtime_event(
+            event=event,
+            embed_creator=create_session_waiting_embed,
+            strategy_key='waiting',
+            log_message=f"Session waiting: {event.playlist_name} by {event.discord_username} (15 min absent)"
+        )
+
+    @commands.Cog.listener()
+    async def on_playlist_session_resumed(self, event: PlaylistSessionResumedEvent):
+        """Handle playlist session resumed events (user returns after pause/wait)"""
+        await self._handle_playlist_runtime_event(
+            event=event,
+            embed_creator=create_session_resumed_embed,
+            strategy_key='resumed',
+            log_message=f"Session resumed: {event.playlist_name} by {event.discord_username} (away {event.minutes_away:.0f} min)"
         )

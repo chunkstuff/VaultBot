@@ -256,13 +256,18 @@ class VaultPulse(commands.Cog):
             if buffer_deltas:
                 await self.playlist_tracker.process_buffer_deltas(buffer_deltas)
 
-            # Check for abandoned sessions AFTER processing current sessions
+            # CRITICAL: Update session snapshots BEFORE checking for abandonment
+            # This captures the current state information while we still have it
+            current_states = self.playlist_tracker.get_active_session_states()
+            await self.playlist_tracker.abandonment_tracker.update_session_snapshots(current_states)
+
+            # Check for abandoned sessions AFTER capturing snapshots
             await self.playlist_tracker.check_for_abandoned_sessions(current_streaming_discord_ids)
 
             # Update embed
             embed = await self.embed_builder.build_status_embed(len(active), len(streaming), streaming)
             await self.embed_builder.update_or_send_embed(embed)
- 
+
             # Optional: Debug playlist tracking state
             if logger.isEnabledFor(logging.DEBUG):
                 debug_info = self.playlist_tracker.get_abandonment_debug_info()

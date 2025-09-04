@@ -11,6 +11,9 @@ from core.events.playlist_events import (
     PlaylistSwitchAwayEvent,
     PlaylistTrackJumpEvent,
     PlaylistSessionAbandonedEvent,
+    PlaylistSessionPausedEvent,
+    PlaylistSessionWaitingEvent,
+    PlaylistSessionResumedEvent
 )
 
 def _create_base_embed(
@@ -202,6 +205,51 @@ def create_session_abandoned_embed(event: PlaylistSessionAbandonedEvent, avatar_
         description=description,
         color=discord.Color.red(),
         timestamp=event.abandoned_at,
+        username=event.discord_username,
+        avatar_url=avatar_url,
+        user_playlist_id=event.user_playlist_id,
+        session_id=event.session_id
+    )
+
+def create_session_paused_embed(event: PlaylistSessionPausedEvent, avatar_url: Optional[str] = None) -> discord.Embed:
+    """Create embed for session paused (5 minutes absent)"""
+    track_title = _format_track_title(event.current_item_title, event.current_item_id)
+    
+    return _create_base_embed(
+        title="⏸️ Session Paused", 
+        description=f"Stepped away from **{event.playlist_name}** at track **#{event.current_index + 1}**\n{track_title}\n{'─' * 45}",
+        color=discord.Color.orange(),
+        timestamp=event.paused_at,
+        username=event.discord_username,
+        avatar_url=avatar_url,
+        user_playlist_id=event.user_playlist_id,
+        session_id=event.session_id
+    )
+
+def create_session_waiting_embed(event: PlaylistSessionWaitingEvent, avatar_url: Optional[str] = None) -> discord.Embed:
+    """Create embed for session waiting for abandonment (15+ minutes absent)"""
+    track_title = _format_track_title(event.current_item_title, event.current_item_id)
+    
+    return _create_base_embed(
+        title="⏰ Session Will Be Abandoned Soon",
+        description=f"Away for **{event.minutes_absent:.0f} minutes** from **{event.playlist_name}** at track **#{event.current_index + 1}**\n{track_title}\n{'─' * 45}",
+        color=discord.Color.from_rgb(255, 107, 53),  # Red-orange  
+        timestamp=event.waiting_at,
+        username=event.discord_username,
+        avatar_url=avatar_url,
+        user_playlist_id=event.user_playlist_id,
+        session_id=event.session_id
+    )
+
+def create_session_resumed_embed(event: PlaylistSessionResumedEvent, avatar_url: Optional[str] = None) -> discord.Embed:
+    """Create embed for session resumed after being paused/waiting"""
+    track_title = _format_track_title(event.current_item_title, event.current_item_id)
+    
+    return _create_base_embed(
+        title="▶️ Session Resumed",
+        description=f"Returned to **{event.playlist_name}** after **{event.minutes_away:.0f} minutes** at track **#{event.current_index + 1}**\n{track_title}\n{'─' * 45}",
+        color=discord.Color.green(),
+        timestamp=event.resumed_at,
         username=event.discord_username,
         avatar_url=avatar_url,
         user_playlist_id=event.user_playlist_id,

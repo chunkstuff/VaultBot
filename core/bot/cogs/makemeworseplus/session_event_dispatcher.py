@@ -6,7 +6,10 @@ from core.events.playlist_events import (
     PlaylistTrackAdvanceEvent,
     PlaylistSwitchAwayEvent,
     PlaylistTrackJumpEvent,
-    PlaylistSessionAbandonedEvent
+    PlaylistSessionAbandonedEvent,
+    PlaylistSessionPausedEvent,
+    PlaylistSessionWaitingEvent,
+    PlaylistSessionResumedEvent
 )
 from .playlist_tracking_db_helpers import (
     get_playlist_length,
@@ -163,3 +166,157 @@ class SessionEventDispatcher:
             ))
         except Exception as e:
             logger.debug(f"[PlaylistSessionTracker] abandonment event emit failed: {e}")
+    
+    async def emit_session_paused(self, discord_id: str, pause_time: datetime, minutes_absent: float):
+        """Emit session paused event with full event object"""
+        if not self.dispatch:
+            return
+            
+        try:
+            # Get the jellyfin user ID from the session state
+            # We need to find the active session for this discord user
+            # This is a simplified approach - you may need to pass session state directly
+            
+            # Try to get jellyfin user ID from link map
+            jellyfin_user_id = None
+            discord_info = None
+            
+            # For now, create a basic event with what we have
+            # The session state would need to be passed to get complete info
+            pause_event = PlaylistSessionPausedEvent(
+                discord_user_id=discord_id,
+                discord_username="Unknown User",  # Will be updated when we have session state access
+                jellyfin_user_id="",
+                user_playlist_id=0,
+                playlist_name="Session",  # Generic name for now
+                current_index=0,
+                current_item_id="",
+                paused_at=pause_time,
+                minutes_absent=minutes_absent,
+                current_item_title=None,
+                session_id=None
+            )
+            
+            self.dispatch("playlist_session_paused", pause_event)
+            logger.debug(f"[SessionEventDispatcher] Emitted session_paused event for {discord_id}")
+            
+        except Exception as e:
+            logger.debug(f"[SessionEventDispatcher] pause event emit failed: {e}")
+
+    async def emit_session_waiting(self, discord_id: str, waiting_time: datetime, minutes_absent: float):
+        """Emit session waiting event with full event object"""
+        if not self.dispatch:
+            return
+            
+        try:
+            # Same issue as above - need session state for complete info
+            waiting_event = PlaylistSessionWaitingEvent(
+                discord_user_id=discord_id,
+                discord_username="Unknown User",  # Will be updated when we have session state access
+                jellyfin_user_id="",
+                user_playlist_id=0,
+                playlist_name="Session",  # Generic name for now
+                current_index=0,
+                current_item_id="",
+                waiting_at=waiting_time,
+                minutes_absent=minutes_absent,
+                current_item_title=None,
+                session_id=None
+            )
+            
+            self.dispatch("playlist_session_waiting", waiting_event)
+            logger.debug(f"[SessionEventDispatcher] Emitted session_waiting event for {discord_id}")
+            
+        except Exception as e:
+            logger.debug(f"[SessionEventDispatcher] waiting event emit failed: {e}")
+
+    async def emit_session_resumed_with_state(self, discord_id: str, state: 'SessionState', resume_time: datetime, minutes_away: float):
+        """Emit session resumed event with complete session state information"""
+        if not self.dispatch:
+            return
+            
+        try:
+            playlist_info = await get_playlist_info(self.vault_db, state.user_playlist_id)
+            discord_info = await self.link_map.get_discord_info(state.jellyfin_user_id)
+            current_title = await get_item_title(self.vault_db, state.current_item_id)
+            
+            resumed_event = PlaylistSessionResumedEvent(
+                discord_user_id=discord_id,
+                discord_username=discord_info[1] if discord_info else "Unknown",
+                jellyfin_user_id=state.jellyfin_user_id,
+                user_playlist_id=state.user_playlist_id,
+                playlist_name=playlist_info.get("playlist_name", "Unknown"),
+                current_index=state.current_index,
+                current_item_id=state.current_item_id,
+                resumed_at=resume_time,
+                minutes_away=minutes_away,
+                current_item_title=current_title,
+                session_id=state.session_id
+            )
+            
+            self.dispatch("playlist_session_resumed", resumed_event)
+            logger.debug(f"[SessionEventDispatcher] Emitted complete session_resumed event for {discord_id}")
+            
+        except Exception as e:
+            logger.debug(f"[SessionEventDispatcher] resume event emit failed: {e}")
+
+    # ENHANCED VERSION - if you can pass session state to abandonment tracker
+    async def emit_session_paused_with_state(self, discord_id: str, state: 'SessionState', pause_time: datetime, minutes_absent: float):
+        """Emit session paused event with complete session state information"""
+        if not self.dispatch:
+            return
+            
+        try:
+            playlist_info = await get_playlist_info(self.vault_db, state.user_playlist_id)
+            discord_info = await self.link_map.get_discord_info(state.jellyfin_user_id)
+            current_title = await get_item_title(self.vault_db, state.current_item_id)
+            
+            pause_event = PlaylistSessionPausedEvent(
+                discord_user_id=discord_id,
+                discord_username=discord_info[1] if discord_info else "Unknown",
+                jellyfin_user_id=state.jellyfin_user_id,
+                user_playlist_id=state.user_playlist_id,
+                playlist_name=playlist_info.get("playlist_name", "Unknown"),
+                current_index=state.current_index,
+                current_item_id=state.current_item_id,
+                paused_at=pause_time,
+                minutes_absent=minutes_absent,
+                current_item_title=current_title,
+                session_id=state.session_id
+            )
+            
+            self.dispatch("playlist_session_paused", pause_event)
+            logger.debug(f"[SessionEventDispatcher] Emitted complete session_paused event for {discord_id}")
+            
+        except Exception as e:
+            logger.debug(f"[SessionEventDispatcher] pause event emit failed: {e}")
+
+    async def emit_session_waiting_with_state(self, discord_id: str, state: 'SessionState', waiting_time: datetime, minutes_absent: float):
+        """Emit session waiting event with complete session state information"""
+        if not self.dispatch:
+            return
+            
+        try:
+            playlist_info = await get_playlist_info(self.vault_db, state.user_playlist_id)
+            discord_info = await self.link_map.get_discord_info(state.jellyfin_user_id)
+            current_title = await get_item_title(self.vault_db, state.current_item_id)
+            
+            waiting_event = PlaylistSessionWaitingEvent(
+                discord_user_id=discord_id,
+                discord_username=discord_info[1] if discord_info else "Unknown",
+                jellyfin_user_id=state.jellyfin_user_id,
+                user_playlist_id=state.user_playlist_id,
+                playlist_name=playlist_info.get("playlist_name", "Unknown"),
+                current_index=state.current_index,
+                current_item_id=state.current_item_id,
+                waiting_at=waiting_time,
+                minutes_absent=minutes_absent,
+                current_item_title=current_title,
+                session_id=state.session_id
+            )
+            
+            self.dispatch("playlist_session_waiting", waiting_event)
+            logger.debug(f"[SessionEventDispatcher] Emitted complete session_waiting event for {discord_id}")
+            
+        except Exception as e:
+            logger.debug(f"[SessionEventDispatcher] waiting event emit failed: {e}")
