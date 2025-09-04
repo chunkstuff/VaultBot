@@ -217,7 +217,7 @@ def create_session_paused_embed(event: PlaylistSessionPausedEvent, avatar_url: O
     
     return _create_base_embed(
         title="⏸️ Session Paused", 
-        description=f"Stepped away from **{event.playlist_name}** at track **#{event.current_index + 1}**\n{track_title}\n{'─' * 45}",
+        description=f"Stepped away from **{event.playlist_name}** at track **#{event.current_index + 1}**\n{track_title}\n",
         color=discord.Color.orange(),
         timestamp=event.paused_at,
         username=event.discord_username,
@@ -232,7 +232,7 @@ def create_session_waiting_embed(event: PlaylistSessionWaitingEvent, avatar_url:
     
     return _create_base_embed(
         title="⏰ Session Will Be Abandoned Soon",
-        description=f"Away for **{event.minutes_absent:.0f} minutes** from **{event.playlist_name}** at track **#{event.current_index + 1}**\n{track_title}\n{'─' * 45}",
+        description=f"Away for **{event.minutes_absent:.0f} minutes** from **{event.playlist_name}** at track **#{event.current_index + 1}**\n{track_title}\n",
         color=discord.Color.from_rgb(255, 107, 53),  # Red-orange  
         timestamp=event.waiting_at,
         username=event.discord_username,
@@ -247,7 +247,7 @@ def create_session_resumed_embed(event: PlaylistSessionResumedEvent, avatar_url:
     
     return _create_base_embed(
         title="▶️ Session Resumed",
-        description=f"Returned to **{event.playlist_name}** after **{event.minutes_away:.0f} minutes** at track **#{event.current_index + 1}**\n{track_title}\n{'─' * 45}",
+        description=f"Returned to **{event.playlist_name}** after **{event.minutes_away:.0f} minutes** at track **#{event.current_index + 1}**\n{track_title}\n",
         color=discord.Color.green(),
         timestamp=event.resumed_at,
         username=event.discord_username,
