@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Annotated[str, Field(description="Password or token for SMTP authentication")]
     EMAIL_FROM: Annotated[str, Field(description="Email address used in the From header")]
 
+    # Local API
+    SUBSCRIPTION_API_BASE_URL: Annotated[str, Field(description="Base URL for subscription API endpoints")]
+
+
     @property
     def HEADERS(self) -> dict:
         return {
@@ -68,6 +72,13 @@ class Settings(BaseSettings):
     def WEBHOOKS(self) -> dict:
         return {
             "status": self.WEBHOOK_STATUS_URL
+        }
+
+    @property
+    def SUBSCRIPTION_ENDPOINTS(self) -> dict:
+        return {
+            "expired": f"{self.SUBSCRIPTION_API_BASE_URL}/api/expired-subscribers",
+            "active": f"{self.SUBSCRIPTION_API_BASE_URL}/api/newly-active-subscribers"
         }
 
     @property 
