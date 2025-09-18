@@ -1,7 +1,9 @@
+# core/bot/cogs/makemeworseplus/session_incrementor.py
+
 import json
 import asyncio
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from utils.logger_factory import setup_logger
 from core.events.playlist_events import PlaylistCompleteEvent
@@ -32,7 +34,7 @@ MAX_EVENT_DELAY_SECONDS = 300  # Maximum delay for event emission (5 minutes)
 SEED_TIME_GUARD_SECONDS = 30
 
 class PlaylistIncrementProcessor:
-    """Handles processing of individual playlist increments"""
+    """Handles processing of individual playlist increments with defensive timestamp validation"""
     
     def __init__(self, vault_db, event_dispatcher: SessionEventDispatcher):
         self.vault_db = vault_db
@@ -43,7 +45,6 @@ class PlaylistIncrementProcessor:
         """Schedule a background task and track it for cleanup"""
         task = asyncio.create_task(coro)
         self._background_tasks.add(task)
-        # Clean up completed tasks automatically
         task.add_done_callback(self._background_tasks.discard)
         return task
 
@@ -55,26 +56,24 @@ class PlaylistIncrementProcessor:
                 if not task.done():
                     task.cancel()
             
-            # Wait for all tasks to complete/cancel
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
             self._background_tasks.clear()
             logger.info("[PlaylistTracker] Background tasks cleaned up")
 
-    # In PlaylistIncrementProcessor class, change this method:
     async def process_increment(self, discord_id: str, jellyfin_user_id: str, 
                               item_id: str, secs: int, 
                               current_state: Optional[SessionState]) -> Optional[SessionState]:
-        """
-        Process a single increment for a user. Returns updated state or None if session ended.
-        """
-        if not current_state:
-            return await self._handle_session_seed(discord_id, jellyfin_user_id, item_id, secs)  # Add secs parameter
+        """Process a single increment with defensive timestamp validation"""
+        now = datetime.now(ZoneInfo("Europe/London"))
         
-        return await self._handle_existing_session(discord_id, jellyfin_user_id, item_id, secs, current_state)
+        if not current_state:
+            return await self._handle_session_seed(discord_id, jellyfin_user_id, item_id, secs, now)
+        
+        return await self._handle_existing_session(discord_id, jellyfin_user_id, item_id, secs, now, current_state)
 
     async def _handle_session_seed(self, discord_id: str, jellyfin_user_id: str, 
-                                 item_id: str, initial_secs: int) -> Optional[SessionState]:  # Add initial_secs parameter
-        """Handle seeding a new session when no current state exists"""
+                                 item_id: str, initial_secs: int, now: datetime) -> Optional[SessionState]:
+        """Handle seeding a new session"""
         candidates = await find_candidate_playlists_by_first_item(
             self.vault_db, discord_id, item_id
         )
@@ -103,11 +102,12 @@ class PlaylistIncrementProcessor:
             current_index=0,
             is_confirmed=auto_confirm,
             current_item_id=item_id,
-            seconds_accum=credited_initial_time,  # Use guarded time
+            seconds_accum=credited_initial_time,
             playlist_length=None,
             playlist_total_runtime=total_runtime,
             second_expected=chosen.get("second"),
             jellyfin_user_id=jellyfin_user_id,
+            track_started_at=now,  # Start tracking time for this track
         )
 
         # Auto-confirm and persist if only one candidate
@@ -130,7 +130,7 @@ class PlaylistIncrementProcessor:
         return state
 
     async def _handle_existing_session(self, discord_id: str, jellyfin_user_id: str,
-                                     item_id: str, secs: int, 
+                                     item_id: str, secs: int, now: datetime,
                                      state: SessionState) -> Optional[SessionState]:
         """Handle increment for existing session"""
         
@@ -147,7 +147,7 @@ class PlaylistIncrementProcessor:
             return await self._handle_same_item_increment(discord_id, state, secs)
         
         # Different item - check if advancing or jumping
-        return await self._handle_item_change(discord_id, jellyfin_user_id, item_id, secs, state)
+        return await self._handle_item_change(discord_id, jellyfin_user_id, item_id, secs, now, state)
 
     async def _handle_same_item_increment(self, discord_id: str, state: SessionState, 
                                         secs: int) -> SessionState:
@@ -175,7 +175,8 @@ class PlaylistIncrementProcessor:
         return state
 
     async def _handle_item_change(self, discord_id: str, jellyfin_user_id: str,
-                                item_id: str, secs: int, state: SessionState) -> Optional[SessionState]:
+                                item_id: str, secs: int, now: datetime, 
+                                state: SessionState) -> Optional[SessionState]:
         """Handle when the current item changes"""
         next_idx = state.current_index + 1
         expected_next = await get_playlist_track_at_index(
@@ -183,38 +184,52 @@ class PlaylistIncrementProcessor:
         )
 
         if expected_next and expected_next == item_id:
-            return await self._handle_sequential_advance(discord_id, item_id, state, secs, next_idx)
+            return await self._handle_sequential_advance(discord_id, item_id, now, state, next_idx)
         else:
-            return await self._handle_non_sequential_jump(discord_id, jellyfin_user_id, item_id, secs, state)
+            return await self._handle_non_sequential_jump(discord_id, jellyfin_user_id, item_id, secs, now, state)
 
     async def _handle_sequential_advance(self, discord_id: str, item_id: str,
-                                       state: SessionState, new_track_secs: int, next_idx: int) -> SessionState:
+                                       now: datetime, state: SessionState, next_idx: int) -> SessionState:
         """
         Handle advancing to the next expected track.
-        Determines if previous track should count as "completed" or "skipped" based on listen time.
+        Uses defensive timestamp validation to prevent false skip detection.
         """
         # Calculate dynamic threshold using helper method
         advance_threshold = await self._calculate_advance_threshold(state.current_item_id)
         
+        # Primary detection: check accumulated seconds
         if state.seconds_accum >= advance_threshold:
-            # User listened to enough of the track - count as completion
-            await self._process_track_completion(discord_id, state, next_idx, item_id, True, new_track_secs)
+            # Normal completion path
+            is_completion = True
             logger.debug(
                 f"[PlaylistTracker] {discord_id} completed track {state.current_index} "
                 f"({state.seconds_accum:.1f}s >= {advance_threshold:.1f}s threshold)"
             )
         else:
-            # User didn't listen to enough - count as skip
-            await self._process_track_completion(discord_id, state, next_idx, item_id, False, new_track_secs)
-            logger.debug(
-                f"[PlaylistTracker] {discord_id} skipped track {state.current_index} "
-                f"({state.seconds_accum:.1f}s < {advance_threshold:.1f}s threshold)"
-            )
+            # DETECTED SKIP - double-check with timestamp
+            time_spent = (now - state.track_started_at).total_seconds() if state.track_started_at else 0
+            
+            if time_spent >= advance_threshold:
+                # Override: timestamp says they actually did listen enough
+                is_completion = True
+                logger.info(
+                    f"[DefensiveCheck] {discord_id} override skip -> completion based on timestamp "
+                    f"(accum: {state.seconds_accum:.1f}s, actual: {time_spent:.1f}s, threshold: {advance_threshold:.1f}s)"
+                )
+            else:
+                # Confirm: it really was a skip
+                is_completion = False
+                logger.debug(
+                    f"[PlaylistTracker] {discord_id} skipped track {state.current_index} "
+                    f"(accum: {state.seconds_accum:.1f}s, actual: {time_spent:.1f}s < {advance_threshold:.1f}s threshold)"
+                )
         
+        await self._process_track_completion(discord_id, state, next_idx, item_id, is_completion, now)
         return state
 
     async def _handle_non_sequential_jump(self, discord_id: str, jellyfin_user_id: str,
-                                        item_id: str, secs: int, state: SessionState) -> Optional[SessionState]:
+                                        item_id: str, secs: int, now: datetime,
+                                        state: SessionState) -> Optional[SessionState]:
         """Handle jumping to a non-sequential track"""
         if state.is_confirmed or state.current_index > 0:
             new_idx = await get_order_index_for_item(self.vault_db, state.user_playlist_id, item_id)
@@ -234,7 +249,7 @@ class PlaylistIncrementProcessor:
                     f"(> {SEED_TIME_GUARD_SECONDS}s guard), starting from 0s instead"
                 )
             
-            await self._process_playlist_jump(discord_id, state, new_idx, item_id, credited_jump_time)
+            await self._process_playlist_jump(discord_id, state, new_idx, item_id, credited_jump_time, now)
             return state
         else:
             # Unconfirmed first track jumping to unexpected - reset
@@ -243,8 +258,8 @@ class PlaylistIncrementProcessor:
 
     async def _process_track_completion(self, discord_id: str, state: SessionState,
                                       next_idx: int, item_id: str, is_completion: bool,
-                                      initial_new_track_secs: int):
-        """Process track advancement with or without completion"""
+                                      now: datetime):
+        """Process track advancement with proper time recording"""
         # Confirm session if needed
         was_unconfirmed_first = (state.current_index == 0 and not state.is_confirmed)
         state.is_confirmed = state.is_confirmed or was_unconfirmed_first
@@ -258,32 +273,21 @@ class PlaylistIncrementProcessor:
             state.jf_playlist_id, state.current_index, state.is_confirmed
         )
 
-        # Calculate the time to record and delay needed
-        time_to_record = state.seconds_accum
-
-        if is_completion and state.seconds_accum > 0:
+        # Calculate time to record
+        if is_completion:
+            # Always record full track runtime for completions
             track_runtime = await get_track_runtime(self.vault_db, state.current_item_id)
-            completion_threshold = track_runtime * COMPLETION_PERCENTAGE
-            time_to_record = min(state.seconds_accum, track_runtime)
-            
-            # If they listened to 90%+ of the track, record the full track time
-            if state.seconds_accum >= completion_threshold:
-                time_to_record = track_runtime
-                logger.debug(
-                    f"[PlaylistTracker] {discord_id} completed track {state.current_index} "
-                    f"({state.seconds_accum:.1f}s/{track_runtime:.1f}s) - crediting full track time"
-                )
+            time_to_record = track_runtime
+            logger.debug(f"[PlaylistTracker] {discord_id} completed track {state.current_index} - recording full track time ({track_runtime:.1f}s)")
+        else:
+            # For skips, record actual time spent (either accumulated or timestamp-based)
+            if state.track_started_at:
+                time_spent = (now - state.track_started_at).total_seconds()
+                time_to_record = max(state.seconds_accum, time_spent)  # Use whichever is higher
             else:
-                # User listened to 67%+ but < 90% - guard against over-time
-                if time_to_record != state.seconds_accum:
-                    logger.debug(
-                        f"[PlaylistTracker] {discord_id} time guard applied: "
-                        f"capping {state.seconds_accum:.1f}s to track runtime {track_runtime:.1f}s"
-                    )
-                logger.debug(
-                    f"[PlaylistTracker] {discord_id} completed track {state.current_index} "
-                    f"({time_to_record:.1f}s/{track_runtime:.1f}s) - standard completion"
-                )
+                time_to_record = state.seconds_accum
+            time_to_record = max(0, time_to_record)  # Don't record negative time
+            logger.debug(f"[PlaylistTracker] {discord_id} skipped track {state.current_index} - recording actual time ({time_to_record:.1f}s)")
 
         # Record time on previous track
         if time_to_record > 0:
@@ -293,14 +297,15 @@ class PlaylistIncrementProcessor:
             )
 
         # Store previous state for event
-        prev_secs = state.seconds_accum
+        prev_time = time_to_record
         prev_item = state.current_item_id
         prev_index = state.current_index
 
-        # Update state
+        # Update state for new track
         state.current_index = next_idx
         state.current_item_id = item_id
-        state.seconds_accum = initial_new_track_secs
+        state.seconds_accum = 0.0  # Reset for new track
+        state.track_started_at = now  # Start tracking time for new track
 
         # Update DB
         await upsert_playlist_session(
@@ -310,17 +315,17 @@ class PlaylistIncrementProcessor:
 
         if is_completion:
             await self.event_dispatcher.emit_track_advance(
-                discord_id, state, prev_index, prev_item, time_to_record, item_id
+                discord_id, state, prev_index, prev_item, prev_time, item_id
             )
             logger.info(f"[PlaylistSessionTracker] {discord_id} advanced to track {next_idx}")
         else:
             await self.event_dispatcher.emit_track_jump(
-                discord_id, state, prev_index, prev_item, prev_secs, item_id
+                discord_id, state, prev_index, prev_item, prev_time, item_id
             )
             logger.info(f"[PlaylistSessionTracker] {discord_id} skipped to track {next_idx}")
 
     async def _process_playlist_jump(self, discord_id: str, state: SessionState,
-                                   new_idx: int, item_id: str, new_track_secs: int = 0):
+                                   new_idx: int, item_id: str, new_track_secs: float, now: datetime):
         """Process jumping within the playlist"""
         if not state.playlist_length:
             state.playlist_length = await get_playlist_length(self.vault_db, state.user_playlist_id)
@@ -336,10 +341,11 @@ class PlaylistIncrementProcessor:
         prev_item = state.current_item_id
         prev_secs = state.seconds_accum
 
-        # Update state
+        # Update state for jumped track
         state.current_index = new_idx
         state.current_item_id = item_id
-        state.seconds_accum = new_track_secs
+        state.seconds_accum = new_track_secs  # Start with credited time
+        state.track_started_at = now  # Start tracking time for new track
 
         await self.event_dispatcher.emit_track_advance(
             discord_id, state, prev_index, prev_item, prev_secs, item_id
@@ -360,9 +366,9 @@ class PlaylistIncrementProcessor:
             state.seconds_accum >= completion_threshold):
             
             if state.session_id:
-                # For final track completion, also use full track time if 95%+ listened
+                # For final track completion, always record full track time
                 track_runtime = await get_track_runtime(self.vault_db, state.current_item_id)
-                time_to_record = track_runtime if state.seconds_accum >= completion_threshold else state.seconds_accum
+                time_to_record = track_runtime
                 delay_seconds = min(max(0, track_runtime - state.seconds_accum), MAX_EVENT_DELAY_SECONDS) if state.seconds_accum >= completion_threshold else 0
                 should_delay_completion = state.seconds_accum >= completion_threshold
                 
