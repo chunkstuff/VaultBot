@@ -32,6 +32,7 @@ from .embeds import (
     create_session_resumed_embed,
 )
 from .playlist_deletion import delete_playlist
+from .playlist_db import get_playlist_items_for_display
 from .playlist_tracking_db_helpers import (
     get_completed_playlist_count,
     get_playlist_info,
@@ -155,15 +156,30 @@ class PlaylistListeners(commands.Cog):
 
     @commands.Cog.listener()
     async def on_playlist_create(self, event: PlaylistCreateEvent):
-        """Handle playlist creation - simple notification"""
-        logger.info(f"Playlist created: {event.playlist_name} by {event.discord_username}")
+        """Handle playlist creation with track listing"""
+        try:
+            logger.info(f"Playlist created: {event.playlist_name} by {event.discord_username}")
 
-        if settings.NETWORK_CHANNEL:
+            if not settings.NETWORK_CHANNEL:
+                return
             channel = self.bot.get_channel(settings.NETWORK_CHANNEL)
-            if channel:
-                avatar_url = await self._get_user_avatar_url(event.discord_user_id)
-                embed = create_playlist_embed(event, avatar_url)
-                await channel.send(embed=embed, silent=True)
+            if not channel:
+                return
+
+            # Get playlist items from database
+            vault_db = self.bot.client.users.sessions.user_session_db
+            playlist_items = await get_playlist_items_for_display(vault_db, event.user_playlist_id)
+            
+            # Create embed with playlist items
+            avatar_url = await self._get_user_avatar_url(event.discord_user_id)
+            embed = create_playlist_embed(event, avatar_url, playlist_items)
+            
+            # Send message
+            await channel.send(embed=embed, silent=True)
+                
+        except Exception as e:
+            logger.error(f"on_playlist_create error: {e}")
+            logger.error(traceback.format_exc())
 
     @commands.Cog.listener()
     async def on_playlist_complete(self, event: PlaylistCompleteEvent):

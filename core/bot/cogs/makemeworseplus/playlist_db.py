@@ -34,8 +34,28 @@ async def expire_old_playlists(vault_db) -> int:
     if count: logger.info(f"[expire_old_playlists] expired {count}")
     return count
 
-
-
+async def get_playlist_items_for_display(vault_db, user_playlist_id: int) -> list[dict]:
+    """
+    Get playlist items with titles for display purposes.
+    Returns list of dicts with id, title, and order_index.
+    """
+    rows = await vault_db.query("""
+        SELECT pi.item_id, pi.order_index, i.title
+        FROM playlist_items pi
+        LEFT JOIN items i ON pi.item_id = i.id
+        WHERE pi.user_playlist_id = ?
+        ORDER BY pi.order_index ASC
+    """, (user_playlist_id,))
+    
+    items = []
+    for row in rows:
+        items.append({
+            "id": row["item_id"],
+            "title": row["title"] or "Unknown Track",
+            "order_index": row["order_index"]
+        })
+    
+    return items
 
 async def count_active_playlists(vault_db, discord_id: str) -> int:
     rows = await vault_db.query(
