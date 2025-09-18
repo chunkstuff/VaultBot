@@ -11,12 +11,25 @@ class VaultPulseDB:
     def __init__(self, db_path: str | Path):
         self.db_path = str(db_path)
         self._conn: aiosqlite.Connection | None = None
+        self._lock = asyncio.Lock()
 
     async def connect(self):
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)  # ✅ ensure dir
-        self._conn = await aiosqlite.connect(self.db_path)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        # Add timeout and enable WAL mode for better concurrency
+        self._conn = await aiosqlite.connect(
+            self.db_path,
+            timeout=30.0,  # 30 second timeout
+            isolation_level=None  # Enable autocommit mode
+        )
         self._conn.row_factory = aiosqlite.Row
-        logger.info(f"🔗 Connected to VaultPulseDB at {self.db_path}")
+        
+        # Enable WAL mode for better concurrency
+        await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA synchronous=NORMAL") 
+        await self._conn.execute("PRAGMA temp_store=memory")
+        await self._conn.execute("PRAGMA mmap_size=268435456")  # 256MB
+        
+        logger.info(f"🔗 Connected to VaultPulseDB at {self.db_path} with WAL mode")
 
     async def init_schema(self):
         if not self._conn:
@@ -257,32 +270,40 @@ class VaultPulseDB:
     async def query(self, sql: str, params: tuple = ()) -> list[aiosqlite.Row]:
         if not self._conn:
             await self.connect()
-        logger.debug(f"📄 QUERY: {sql} | params: {params}")
-        async with self._conn.execute(sql, params) as cursor:
-            rows = await cursor.fetchall()
-            return rows
+        
+        async with self._lock:  # Use lock for all operations
+            logger.debug(f"📄 QUERY: {sql} | params: {params}")
+            async with self._conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+                return rows
 
     async def execute(self, sql: str, params: tuple = ()) -> int:
         if not self._conn:
             await self.connect()
-        logger.debug(f"✏️ EXECUTE: {sql} | params: {params}")
-        async with self._conn.execute(sql, params) as cursor:
-            await self._conn.commit()
-            return cursor.rowcount
+            
+        async with self._lock:  # Use lock for all operations
+            logger.debug(f"✏️ EXECUTE: {sql} | params: {params}")
+            async with self._conn.execute(sql, params) as cursor:
+                await self._conn.commit()
+                return cursor.rowcount
     
     async def insert(self, sql: str, params: tuple = ()) -> int:
         """Execute an INSERT and return the new row ID (lastrowid)."""
         if not self._conn:
             await self.connect()
-        logger.debug(f"➕ INSERT: {sql} | params: {params}")
-        async with self._conn.execute(sql, params) as cursor:
-            await self._conn.commit()
-            return cursor.lastrowid
+            
+        async with self._lock:  # Use lock for all operations
+            logger.debug(f"➕ INSERT: {sql} | params: {params}")
+            async with self._conn.execute(sql, params) as cursor:
+                await self._conn.commit()
+                return cursor.lastrowid
 
     async def execute_many(self, sql: str, param_list: list[tuple]) -> int:
         if not self._conn:
             await self.connect()
-        logger.debug(f"📝 EXECUTE MANY: {sql} | {len(param_list)} items")
-        await self._conn.executemany(sql, param_list)
-        await self._conn.commit()
-        return len(param_list)
+            
+        async with self._lock:  # Use lock for all operations
+            logger.debug(f"📝 EXECUTE MANY: {sql} | {len(param_list)} items")
+            await self._conn.executemany(sql, param_list)
+            await self._conn.commit()
+            return len(param_list)
