@@ -148,7 +148,7 @@ ehthumbs.db
 Thumbs.db
 
 # Database files
-*.db
+*.db*
 *.sqlite
 *.sqlite3
 db.sqlite3-journal
