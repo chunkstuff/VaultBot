@@ -26,7 +26,7 @@ class UserLinksDB:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 discord_user_id TEXT UNIQUE NOT NULL,
                 discord_username TEXT NOT NULL,
-                jellyfin_user_id TEXT NOT NULL
+                jellyfin_user_id TEXT UNIQUE NOT NULL
             )
         """)
         

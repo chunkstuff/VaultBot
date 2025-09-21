@@ -17,41 +17,41 @@ class UserService:
 
     async def register_user(self, discord_id: str, discord_username: str, password: str, is_admin: bool = False) -> dict:
         try:
+            # First check: Is this Discord user already linked to ANY Jellyfin account?
             if await self.linker.user_exists(discord_id):
-                jellyfin_id = await self.linker.get_jellyfin_user_id(discord_id)  # Updated method name
+                jellyfin_id = await self.linker.get_jellyfin_user_id(discord_id)
                 jellyfin_user = await self.api.get_by_jellyfin_user_id(jellyfin_id)
                 jellyfin_username = jellyfin_user['Name']
                 raise UserAlreadyExists(jellyfin_username, linked=True)
             
-            user = await self.get_user_by_jellyfin_username(discord_username)
-            jellyfin_id = user.get("Id")
-            linked_id = await self.get_jellyfin_user_id(discord_id)  # Updated method name
-            
-            if linked_id == jellyfin_id:
-                logger.info("🔁 Jellyfin account already linked correctly.")
-                raise UserAlreadyExists(discord_username, linked=True)
+            # Second check: Does a Jellyfin user with this username already exist?
+            try:
+                existing_user = await self.get_user_by_jellyfin_username(discord_username)
+                existing_jellyfin_id = existing_user.get("Id")
                 
-            if linked_id and linked_id != jellyfin_id:
-                logger.warning("⚠️ Discord ID is linked to a different Jellyfin user.")
-                raise UserLinkedToDifferentDiscord(discord_username)
+                # Username exists - check if it's linked to someone else
+                existing_discord_info = await self.linker.get_discord_info(existing_jellyfin_id)
                 
-            if not linked_id:
-                logger.info(f"🔗 Linking unlinked Jellyfin user '{discord_username}' to Discord ID {discord_id}")
-                await self.linker.link(discord_id, discord_username, jellyfin_id)
-                raise UserAlreadyExists(discord_username, linked=False)
-                
-        except ClientResponseError as e:
-            if e.status == 404:
-                try:
+                if existing_discord_info:
+                    # This Jellyfin account is already linked to a different Discord user
+                    raise UserLinkedToDifferentDiscord(discord_username)
+                else:
+                    # Jellyfin account exists but isn't linked - link it to this Discord user
+                    logger.info(f"🔗 Linking existing unlinked Jellyfin user '{discord_username}' to Discord ID {discord_id}")
+                    await self.linker.link(discord_id, discord_username, existing_jellyfin_id)
+                    raise UserAlreadyExists(discord_username, linked=False)
+                    
+            except ClientResponseError as e:
+                if e.status == 404:
+                    # Username doesn't exist in Jellyfin - safe to create new user
                     logger.info(f"🆕 Creating new Jellyfin user '{discord_username}'")
                     new_user = await self.api.create_user(discord_username, password, is_admin)
                     await self.linker.link(discord_id, discord_username, new_user["Id"])
                     return new_user
-                except Exception as inner_error:
-                    if self.admin_notifier:
-                        await self.admin_notifier.send_admin_alert(inner_error, context="User Creation/Link Failure")
+                else:
+                    # Some other API error
                     raise
-            raise
+                    
         except (UserAlreadyExists, UserLinkedToDifferentDiscord):
             raise
         except Exception as e:
