@@ -14,7 +14,12 @@ from config.settings import settings
 from core.services.admin_notifier import AdminNotifier
 from core.services.notifier import Notifier
 from core.services.user_logger import log_registered_user
-from errors.exceptions import UserAlreadyExists, UserLinkedToDifferentDiscord
+from errors.exceptions import (
+    DiscordAlreadyLinkedSameUsername,
+    DiscordAlreadyLinkedDifferentUsername,
+    UsernameExistsUnlinked,
+    UsernameTaken
+)
 from utils.logger_factory import setup_logger
 
 logger = setup_logger(__name__)
@@ -180,20 +185,21 @@ class VaultBot(commands.Bot):
                     f"-# Credentials sent to `{email}`"
                 )
 
-            except UserAlreadyExists as e:
-                if not e.linked:
-                    return (
-                        f"## 🔁 Vault+ account `{e.username}` existed, but is now linked to you.\n"
-                        f"Username: `{e.username}`\n"
-                        f"-# Linked to Discord user `{discord_username}`"
-                    )
-                return f"⚠️ An account for `{e.username}` already exists and is linked to you."
+            except DiscordAlreadyLinkedSameUsername as e:
+                return f"⚠️ You're already registered as `{e.username}`.\n\n-# Forgot your password? Contact support."
 
-            except UserLinkedToDifferentDiscord as e:
+            except DiscordAlreadyLinkedDifferentUsername as e:
+                return f"⚠️ You're already registered as `{e.existing_username}`.\n\n-# You tried to register as `{e.requested_username}`. Contact support if you need help."
+
+            except UsernameExistsUnlinked as e:
                 return (
-                    f"🚫 An account named `{e.username}` already exists. Please choose another username.\n\n"
-                    f"-# Something not right? Contact support."
+                    f"## 🔁 Vault+ account `{e.username}` existed, but is now linked to you.\n"
+                    f"Username: `{e.username}`\n"
+                    f"-# Linked to Discord user `{discord_username}`"
                 )
+
+            except UsernameTaken as e:
+                return f"🚫 Username `{e.username}` is already taken. Please choose another username."
 
             except Exception:
                 trace = traceback.format_exc()

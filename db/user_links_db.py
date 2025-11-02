@@ -53,9 +53,6 @@ class UserLinksDB:
         await self._conn.execute("""
             INSERT INTO user_links (discord_user_id, discord_username, jellyfin_user_id)
             VALUES (?, ?, ?)
-            ON CONFLICT(discord_user_id) DO UPDATE SET
-                discord_username = excluded.discord_username,
-                jellyfin_user_id = excluded.jellyfin_user_id
         """, (discord_user_id, discord_username, jellyfin_user_id))
         await self._conn.commit()
         logger.info("[DB] Link committed.")
