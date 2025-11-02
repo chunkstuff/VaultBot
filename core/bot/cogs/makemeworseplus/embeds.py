@@ -254,25 +254,19 @@ def create_start_embed(event: PlaylistStartEvent, avatar_url: Optional[str] = No
     
     return embed
 
-def create_track_advance_embed(event: PlaylistTrackAdvanceEvent, avatar_url: Optional[str] = None,
-                              playlist_items: Optional[List[dict]] = None, 
-                              playlist_name: Optional[str] = None) -> discord.Embed:
-    """Enhanced track advance embed with better formatting"""
-    from_title = _format_track_title(event.from_item_title, event.from_item_id, max_length=30)
-    to_title = _format_track_title(event.to_item_title, event.to_item_id, max_length=30)
+def create_track_advance_embed(event: PlaylistTrackAdvanceEvent, avatar_url: Optional[str] = None) -> discord.Embed:
+    """Quiet update when the user moves to the next track within the same playlist"""
+    from_title = _format_track_title(event.from_item_title, event.from_item_id)
+    to_title = _format_track_title(event.to_item_title, event.to_item_id)
     time_spent = _format_time_spent(event.seconds_on_from)
     
-    # Calculate total tracks from playlist items if available
-    total_tracks = len(playlist_items) if playlist_items else "?"
-    
     description = (
-        f"**{playlist_name or f'Playlist #{event.user_playlist_id}'}**\n"
-        f"✅ **Track {event.from_index + 1}:** {from_title} *({time_spent})*\n"
-        f"▶️ **Track {event.to_index + 1}/{total_tracks}:** {to_title}"
+        f"Advanced **#{event.from_index + 1} → #{event.to_index + 1}/{event.total_tracks}** ({from_title}) {time_spent}\n"
+        f"**Now playing:** {to_title}"
     )
     
-    embed = _create_base_embed(
-        title="⏭️ Track Complete",
+    return _create_base_embed(
+        title="⏭️ Track Advance",
         description=description,
         color=discord.Color.teal(),
         timestamp=event.occurred_at,
@@ -281,53 +275,20 @@ def create_track_advance_embed(event: PlaylistTrackAdvanceEvent, avatar_url: Opt
         user_playlist_id=event.user_playlist_id,
         session_id=event.session_id
     )
-    
-    # Add condensed playlist view showing progress
-    if playlist_items:
-        formatted_items = _format_playlist_items(playlist_items, event.to_index)
-        
-        if isinstance(formatted_items, dict):
-            # Two-column layout
-            embed.add_field(
-                name=f"📋 Progress 1-{(len(playlist_items) + 1) // 2}",
-                value=formatted_items["left"],
-                inline=True
-            )
-            if formatted_items["right"]:
-                mid_point = (len(playlist_items) + 1) // 2
-                embed.add_field(
-                    name=f"📋 Progress {mid_point + 1}-{len(playlist_items)}",
-                    value=formatted_items["right"],
-                    inline=True
-                )
-        else:
-            # Single column layout
-            embed.add_field(
-                name=f"📋 Progress ({event.to_index + 1}/{len(playlist_items)})",
-                value=formatted_items,
-                inline=False
-            )
-    
-    return embed
 
-def create_track_jump_embed(event: PlaylistTrackJumpEvent, avatar_url: Optional[str] = None,
-                           playlist_items: Optional[List[dict]] = None,
-                           playlist_name: Optional[str] = None) -> discord.Embed:
-    """Enhanced track jump embed"""
-    from_title = _format_track_title(event.from_item_title, event.from_item_id, max_length=30)
-    to_title = _format_track_title(event.to_item_title, event.to_item_id, max_length=30)
+def create_track_jump_embed(event: PlaylistTrackJumpEvent, avatar_url: Optional[str] = None) -> discord.Embed:
+    """Quiet update when the user skips/jumps tracks"""
+    from_title = _format_track_title(event.from_item_title, event.from_item_id)
+    to_title = _format_track_title(event.to_item_title, event.to_item_id)
     time_spent = _format_time_spent(event.seconds_on_from)
     
-    total_tracks = len(playlist_items) if playlist_items else "?"
-    
     description = (
-        f"**{playlist_name or f'Playlist #{event.user_playlist_id}'}**\n"
-        f"⏩ **Skipped Track {event.from_index + 1}:** {from_title} *({time_spent})*\n"
-        f"▶️ **Track {event.to_index + 1}/{total_tracks}:** {to_title}"
+        f"Advanced **#{event.from_index + 1} → #{event.to_index + 1}/{event.total_tracks}** {from_title} {time_spent}\n"
+        f"**Now playing:** {to_title}"
     )
     
-    embed = _create_base_embed(
-        title="⏭️ Track Skipped",
+    return _create_base_embed(
+        title="⏭️ Track Skip",
         description=description,
         color=discord.Color.yellow(),
         timestamp=event.occurred_at,
@@ -336,33 +297,6 @@ def create_track_jump_embed(event: PlaylistTrackJumpEvent, avatar_url: Optional[
         user_playlist_id=event.user_playlist_id,
         session_id=event.session_id
     )
-    
-    if playlist_items:
-        formatted_items = _format_playlist_items(playlist_items, event.to_index)
-        
-        if isinstance(formatted_items, dict):
-            # Two-column layout
-            embed.add_field(
-                name=f"📋 Progress 1-{(len(playlist_items) + 1) // 2}",
-                value=formatted_items["left"],
-                inline=True
-            )
-            if formatted_items["right"]:
-                mid_point = (len(playlist_items) + 1) // 2
-                embed.add_field(
-                    name=f"📋 Progress {mid_point + 1}-{len(playlist_items)}",
-                    value=formatted_items["right"],
-                inline=True
-            )
-        else:
-            # Single column layout
-            embed.add_field(
-                name=f"📋 Progress ({event.to_index + 1}/{len(playlist_items)})",
-                value=formatted_items,
-                inline=False
-            )
-    
-    return embed
 
 def create_switch_away_embed(
     event: PlaylistSwitchAwayEvent,

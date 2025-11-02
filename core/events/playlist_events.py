@@ -60,6 +60,7 @@ class PlaylistTrackAdvanceEvent:
     to_item_id: str
     seconds_on_from: float
     occurred_at: datetime
+    total_tracks: int
     from_item_title: Optional[str] = None
     to_item_title: Optional[str] = None
     session_id: Optional[int] = None
@@ -75,6 +76,7 @@ class PlaylistTrackJumpEvent:
     to_item_id: str
     seconds_on_from: float
     occurred_at: datetime
+    total_tracks: int
     from_item_title: Optional[str] = None
     to_item_title: Optional[str] = None
     session_id: Optional[int] = None

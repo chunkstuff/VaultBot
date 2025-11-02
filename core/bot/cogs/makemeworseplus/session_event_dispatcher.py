@@ -63,6 +63,7 @@ class SessionEventDispatcher:
             return
             
         try:
+            total_tracks = await get_playlist_length(self.vault_db, state.user_playlist_id) or 0
             discord_info = await self.link_map.get_discord_info(state.jellyfin_user_id)
             prev_title = await get_item_title(self.vault_db, prev_item)
             to_title = await get_item_title(self.vault_db, new_item)
@@ -77,6 +78,7 @@ class SessionEventDispatcher:
                 to_item_id=new_item,
                 seconds_on_from=prev_secs,
                 occurred_at=datetime.now(ZoneInfo("Europe/London")),
+                total_tracks=total_tracks,
                 from_item_title=prev_title,
                 to_item_title=to_title,
                 session_id=state.session_id,
@@ -92,6 +94,7 @@ class SessionEventDispatcher:
             return
             
         try:
+            total_tracks = await get_playlist_length(self.vault_db, state.user_playlist_id) or 0
             discord_info = await self.link_map.get_discord_info(state.jellyfin_user_id)
             prev_title = await get_item_title(self.vault_db, prev_item)
             to_title = await get_item_title(self.vault_db, new_item)
@@ -106,12 +109,13 @@ class SessionEventDispatcher:
                 to_item_id=new_item,
                 seconds_on_from=prev_secs,
                 occurred_at=datetime.now(ZoneInfo("Europe/London")),
+                total_tracks=total_tracks,
                 from_item_title=prev_title,
                 to_item_title=to_title,
                 session_id=state.session_id,
             ))
         except Exception as e:
-            logger.debug(f"[PlaylistTracker] skip event emit failed: {e}")
+            logger.debug(f"[PlaylistTracker] jump event emit failed: {e}")
 
     async def emit_switch_away(self, discord_id: str, state: SessionState, new_item_id: str):
         """Emit switch away event"""
