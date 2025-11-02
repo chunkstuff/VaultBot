@@ -73,32 +73,46 @@ class WorseView(View):
             valid_tags = [t for t in self.tags_list if t.lower() != "unknown"]
             valid_tags.sort()
 
-            # Split tags into chunks for better display
-            chunk_size = len(valid_tags) // 3
-            if chunk_size == 0:
-                chunk_size = len(valid_tags)
+            # 3 columns × 25 tags = 75 tags per page
+            TAGS_PER_PAGE = 75
+            TAGS_PER_COLUMN = 25
             
-            chunks = [valid_tags[i:i + chunk_size] for i in range(0, len(valid_tags), chunk_size)]
+            # Split tags into pages
+            pages = []
+            for i in range(0, len(valid_tags), TAGS_PER_PAGE):
+                page_tags = valid_tags[i:i + TAGS_PER_PAGE]
+                pages.append(page_tags)
             
-            embed = discord.Embed(
-                title="🏷️ Available Tags",
-                description=(
-                    "Use **comma-separated tags** to filter your playlist (e.g. `Chastity, Gooner, Mind Break`). "
-                    "Partial matches work too! You can mix and match up to 3 tags."
-                ),
-                color=discord.Color.blue()
-            )
-            
-            field_names = ["Tags (A–F)", "Tags (F–O)", "Tags (O–Z)"]
-            for i, chunk in enumerate(chunks[:3]):  # Limit to 3 fields
-                field_name = field_names[i] if i < len(field_names) else f"Tags ({i+1})"
-                embed.add_field(
-                    name=field_name,
-                    value="\n".join(chunk) or "—",
-                    inline=True
+            # If there's only one page, send it directly
+            if len(pages) == 1:
+                embed = discord.Embed(
+                    title="🏷️ Available Tags",
+                    description=(
+                        "Use **comma-separated tags** to filter your playlist (e.g. `Chastity, Gooner, Mind Break`). "
+                        "Partial matches work too! You can mix and match up to 3 tags."
+                    ),
+                    color=discord.Color.blue()
                 )
-
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+                
+                # Split into 3 columns
+                page_tags = pages[0]
+                col1 = page_tags[0:TAGS_PER_COLUMN]
+                col2 = page_tags[TAGS_PER_COLUMN:TAGS_PER_COLUMN*2]
+                col3 = page_tags[TAGS_PER_COLUMN*2:TAGS_PER_COLUMN*3]
+                
+                if col1:
+                    embed.add_field(name="Tags (A-)", value="\n".join(col1), inline=True)
+                if col2:
+                    embed.add_field(name="Tags (cont.)", value="\n".join(col2), inline=True)
+                if col3:
+                    embed.add_field(name="Tags (cont.)", value="\n".join(col3), inline=True)
+                
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                # Multiple pages - create paginated view
+                view = TagsPaginationView(pages)
+                embed = view.create_embed(0)
+                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
         except Exception as e:
             logger.error(f"[show_tags_button] Failed to show tags: {e}")
@@ -265,3 +279,55 @@ class WorseView(View):
 
     async def _send_playlist_dm(self, user: discord.User, playlist_url: str):
         await user.send(f"<:sirbubbles:1267167900159053876> Your **Get Worse** playlist is ready: {playlist_url}")
+
+
+class TagsPaginationView(discord.ui.View):
+    def __init__(self, pages: list[list[str]]):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.pages = pages
+        self.current_page = 0
+        self.tags_per_column = 25
+        self.update_buttons()
+    
+    def create_embed(self, page_index: int) -> discord.Embed:
+        embed = discord.Embed(
+            title=f"🏷️ Available Tags (Page {page_index + 1}/{len(self.pages)})",
+            description=(
+                "Use **comma-separated tags** to filter your playlist (e.g. `Chastity, Gooner, Mind Break`). "
+                "Partial matches work too! You can mix and match up to 3 tags."
+            ),
+            color=discord.Color.blue()
+        )
+        
+        # Split page tags into 3 columns of 25
+        page_tags = self.pages[page_index]
+        col1 = page_tags[0:self.tags_per_column]
+        col2 = page_tags[self.tags_per_column:self.tags_per_column*2]
+        col3 = page_tags[self.tags_per_column*2:self.tags_per_column*3]
+        
+        if col1:
+            embed.add_field(name="", value="\n".join(col1), inline=True)
+        if col2:
+            embed.add_field(name="", value="\n".join(col2), inline=True)
+        if col3:
+            embed.add_field(name="", value="\n".join(col3), inline=True)
+        
+        return embed
+    
+    def update_buttons(self):
+        self.previous_button.disabled = (self.current_page == 0)
+        self.next_button.disabled = (self.current_page == len(self.pages) - 1)
+    
+    @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page -= 1
+        self.update_buttons()
+        embed = self.create_embed(self.current_page)
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.current_page += 1
+        self.update_buttons()
+        embed = self.create_embed(self.current_page)
+        await interaction.response.edit_message(embed=embed, view=self)
