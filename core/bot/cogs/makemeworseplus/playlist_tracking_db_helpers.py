@@ -95,11 +95,13 @@ async def get_track_runtime(vault_db, item_id: str) -> float:
         try:
             metadata = json.loads(rows[0]["metadata_json"])
             runtime_ticks = metadata.get("RunTimeTicks", 0)
-            return runtime_ticks / TICKS_PER_SECOND
+            if runtime_ticks > 0:
+                return runtime_ticks / TICKS_PER_SECOND
         except json.JSONDecodeError:
             logger.warning(f"Invalid JSON metadata for track {item_id}")
     
-    return 300.0  # Default 5 minutes if no metadata
+    logger.warning(f"No runtime metadata for track {item_id}, using 60s default")
+    return 60.0  # Default 60 seconds for tracks with missing metadata
 
 async def find_recent_incomplete_session_for_user(vault_db, discord_id: str, hours: int = 6):
     return await vault_db.query_one(  # <-- was query(...)
