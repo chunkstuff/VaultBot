@@ -1,0 +1,179 @@
+name: Deploy VaultBot to PiLab
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Install cloudflared
+      run: |
+        wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+        sudo dpkg -i cloudflared-linux-amd64.deb
+    
+    - name: Setup SSH config for Cloudflare Tunnel
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.PI_SSH_KEY }}" > ~/.ssh/pi_key
+        chmod 600 ~/.ssh/pi_key
+        cat >> ~/.ssh/config << EOF
+        Host pilab
+          HostName ${{ secrets.PI_HOST }}
+          User ${{ secrets.PI_USERNAME }}
+          IdentityFile ~/.ssh/pi_key
+          ProxyCommand cloudflared access ssh --hostname %h
+        EOF
+    
+    - name: Deploy to Pi
+      run: |
+        ssh -o StrictHostKeyChecking=no pilab << 'ENDSSH'
+          echo "🚀 Starting deployment of VaultBot..."
+          
+          DEPLOY_DIR="/tmp/vaultbot-deploy-$(date +%s)"
+          mkdir -p $DEPLOY_DIR
+          sudo chown pluribus:pluribus $DEPLOY_DIR
+          cd $DEPLOY_DIR
+          
+          echo "📥 Cloning repository..."
+          sudo -u pluribus bash -c "cd $DEPLOY_DIR && GIT_SSH_COMMAND='ssh -i /home/pluribus/.ssh/github_deploy -o StrictHostKeyChecking=no' git clone git@github.com:${{ github.repository }}.git ."
+          sudo mkdir -p /home/pluribus/plures/vaultbot
+          
+          echo "🛑 Stopping bot..."
+          sudo systemctl stop vaultbot.service 2>/dev/null || true
+          
+          if [ -d "/home/pluribus/plures/vaultbot" ]; then
+            sudo cp -r /home/pluribus/plures/vaultbot /home/pluribus/plures/vaultbot.backup
+          fi
+          
+          echo "📋 Deploying code..."
+          sudo rsync -av --delete \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.env' \
+            --exclude='.env.example' \
+            --exclude='*.log' \
+            --exclude='README.md' \
+            --exclude='venv' \
+            --exclude='db/*.db' \
+            --exclude='logs/*' \
+            $DEPLOY_DIR/ \
+            /home/pluribus/plures/vaultbot/
+          
+          if [ -f "/home/pluribus/plures/vaultbot.backup/.env" ]; then
+            sudo cp /home/pluribus/plures/vaultbot.backup/.env /home/pluribus/plures/vaultbot/.env
+          fi
+          
+          sudo chown -R pluribus:pluribus /home/pluribus/plures/vaultbot/
+          
+          sudo mkdir -p /home/pluribus/shared
+          sudo mkdir -p /home/pluribus/logs
+          sudo chown -R pluribus:pluribus /home/pluribus/shared
+          sudo chown -R pluribus:pluribus /home/pluribus/logs
+          
+          echo "📦 Setting up virtual environment..."
+          if [ ! -d "/home/pluribus/plures/vaultbot/venv" ]; then
+            sudo -u pluribus python3 -m venv /home/pluribus/plures/vaultbot/venv
+          fi
+          
+          sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/pip install --upgrade pip
+          sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/pip install -r /home/pluribus/plures/vaultbot/requirements.txt
+          
+          echo "▶️  Starting bot..."
+          sudo systemctl start vaultbot.service
+          
+          sleep 3
+          if sudo systemctl is-active --quiet vaultbot.service; then
+            echo "✅ VaultBot deployed successfully!"
+            sudo journalctl -u vaultbot.service -n 10 --no-pager
+          else
+            echo "❌ Deployment failed! Rolling back..."
+            sudo systemctl stop vaultbot.service
+            sudo rm -rf /home/pluribus/plures/vaultbot
+            if [ -d "/home/pluribus/plures/vaultbot.backup" ]; then
+              sudo mv /home/pluribus/plures/vaultbot.backup /home/pluribus/plures/vaultbot
+              sudo systemctl start vaultbot.service
+            fi
+            exit 1
+          fi
+          
+          sudo rm -rf $DEPLOY_DIR
+          sudo rm -rf /home/pluribus/plures/vaultbot.backup
+          
+          echo "🎉 Deployment complete!"
+        ENDSSH
+    
+    - name: Notify Discord on Success
+      if: success()
+      env:
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+      run: |
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d @- "$DISCORD_WEBHOOK" <<EOF
+        {
+          "embeds": [{
+            "title": "🚀 VaultBot Deployed",
+            "description": "Successfully deployed to PiLab",
+            "color": 5763719,
+            "fields": [
+              {
+                "name": "Commit",
+                "value": "${{ github.event.head_commit.message }}",
+                "inline": false
+              },
+              {
+                "name": "Branch",
+                "value": "${{ github.ref_name }}",
+                "inline": true
+              },
+              {
+                "name": "Deployed by",
+                "value": "${{ github.actor }}",
+                "inline": true
+              }
+            ]
+          }]
+        }
+        EOF
+    
+    - name: Notify Discord on Failure
+      if: failure()
+      env:
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+      run: |
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d @- "$DISCORD_WEBHOOK" <<EOF
+        {
+          "embeds": [{
+            "title": "❌ VaultBot Deployment Failed",
+            "description": "Deployment to PiLab failed",
+            "color": 15158332,
+            "fields": [
+              {
+                "name": "Commit",
+                "value": "${{ github.event.head_commit.message }}",
+                "inline": false
+              },
+              {
+                "name": "Branch",
+                "value": "${{ github.ref_name }}",
+                "inline": true
+              },
+              {
+                "name": "Check logs",
+                "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                "inline": false
+              }
+            ]
+          }]
+        }
+        EOF
