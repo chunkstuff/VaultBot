@@ -57,8 +57,11 @@ jobs:
             --exclude='.git' \
             --exclude='__pycache__' \
             --exclude='*.pyc' \
-            --exclude='config/secrets.env' \
+            --exclude='.env' \
             --exclude='.env.example' \
+            --exclude='config/secrets.env' \
+            --exclude='config/collections_and_tags.json' \
+            --exclude='config/config.json' \
             --exclude='*.log' \
             --exclude='README.md' \
             --exclude='venv' \
