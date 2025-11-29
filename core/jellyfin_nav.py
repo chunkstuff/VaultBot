@@ -2,11 +2,12 @@ import os
 import traceback
 from pathlib import Path
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout, Page
+from config.settings import settings
 from core.services.admin_notifier import AdminNotifier
 from utils.logger_factory import setup_logger
 
 logger = setup_logger(__name__)
-ERROR_DIR = Path("errors/screenshots")
+ERROR_DIR = Path(settings.ERROR_SCREENSHOT_PATH)
 ERROR_DIR.mkdir(parents=True, exist_ok=True)
 
 
