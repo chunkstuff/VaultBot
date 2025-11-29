@@ -85,6 +85,10 @@ jobs:
           
           sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/pip install --upgrade pip
           sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/pip install -r /home/pluribus/plures/vaultbot/requirements.txt
+
+          echo "🎭 Installing Playwright browsers..."
+          sudo /home/pluribus/plures/vaultbot/venv/bin/playwright install-deps chromium
+          sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/playwright install chromium
           
           echo "▶️  Starting bot..."
           sudo systemctl start vaultbot.service
