@@ -42,7 +42,7 @@ jobs:
           cd $DEPLOY_DIR
           
           echo "📥 Cloning repository..."
-          sudo -u pluribus bash -c "cd $DEPLOY_DIR && GIT_SSH_COMMAND='ssh -i /home/pluribus/.ssh/github_deploy -o StrictHostKeyChecking=no' git clone git@github.com:${{ github.repository }}.git ."
+          sudo -u pluribus bash -c "cd $DEPLOY_DIR && GIT_SSH_COMMAND='ssh -i /home/pluribus/.ssh/vaultbot_deploy -o StrictHostKeyChecking=no' git clone git@github.com:${{ github.repository }}.git ."
           sudo mkdir -p /home/pluribus/plures/vaultbot
           
           echo "🛑 Stopping bot..."
