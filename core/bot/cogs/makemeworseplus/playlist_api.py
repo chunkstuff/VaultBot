@@ -6,8 +6,11 @@ from utils.logger_factory import setup_logger
 from utils.decorators import handle_exceptions
 from utils.tag_metrics import increment_missing_tag
 from .playlist_utils import extract_collection_category, is_priority_collection, is_mmw_name
+from .excluded_items_cache import ExcludedItemsCache
+
 
 logger = setup_logger(__name__)
+_excluded_cache = ExcludedItemsCache()
 
 def flatten_and_validate_tags(tags):
     """
@@ -183,20 +186,23 @@ async def _get_filler_items(
     *,
     ensure_curveball: bool = True,
     avoid_tags_entirely: bool = False,
+    excluded_ids: set[str] | None = None,
 ) -> list:
-    """
-    Minimal change: still random-based, but now guarantees at least one curveball
-    and (optionally) avoids tags entirely when requested.
-    """
-    if count <= 0:  # Guard against negative or zero count
+    if count <= 0:
         return []
     
-    # Flatten tags at the start
+    # GET EXCLUDED LIST IF NOT PROVIDED
+    if excluded_ids is None:
+        excluded_ids = await _excluded_cache.get_excluded_ids(jellyfin_client)
+    
     clean_tags = flatten_and_validate_tags(tags)
     
     query = urlencode({"IncludeItemTypes": "Audio", "Recursive": "true", "SortBy": "Random", "Fields": "Tags,BasicSyncInfo,Path"})
     response = await jellyfin_client.api.get(f"/Items?{query}")
-    all_items = [it for it in response.get("Items", []) if it.get("Id") not in used_ids]
+    
+    # FILTER OUT EXCLUDED ITEMS USING CACHED SET
+    all_items = [it for it in response.get("Items", []) 
+                 if it.get("Id") not in used_ids and it.get("Id") not in excluded_ids]
     
     if not all_items:  # No items available
         logger.warning("[filler] No items available for filler")
@@ -237,18 +243,23 @@ async def _get_filler_items(
 
 @handle_exceptions
 async def generate_random_playlist(jellyfin_client, count: int, tags: list[str] | None = None) -> list:
-    if count <= 0:  # Guard against invalid count
+    if count <= 0:
         logger.warning("[generate_random_playlist] Invalid count requested")
         return []
     
-    # Flatten tags at the very start
     clean_tags = flatten_and_validate_tags(tags)
     logger.debug(f"[generate_random_playlist] Original tags: {repr(tags)}, Clean tags: {repr(clean_tags)}")
+    
+    # GET EXCLUDED LIST ONCE
+    excluded_ids = await _excluded_cache.get_excluded_ids(jellyfin_client)
     
     used_ids = set()
     query = urlencode({"IncludeItemTypes": "Audio", "Recursive": "true", "SortBy": "Random", "Fields": "Tags,BasicSyncInfo,Path"})
     response = await jellyfin_client.api.get(f"/Items?{query}")
-    all_items = [it for it in response.get("Items", []) if it.get("Id") not in used_ids]
+    
+    # FILTER OUT EXCLUDED ITEMS USING CACHED SET
+    all_items = [it for it in response.get("Items", []) 
+                 if it.get("Id") not in used_ids and it.get("Id") not in excluded_ids]
     
     if not all_items:  # No items available at all
         logger.error("[generate_random_playlist] No audio items found in library")
@@ -287,11 +298,10 @@ async def generate_random_playlist(jellyfin_client, count: int, tags: list[str] 
 
 @handle_exceptions
 async def generate_playlist(jellyfin_client, count: int, collections: list[str], tags: list[str] | None = None) -> list:
-    if count <= 0:  # Guard against invalid count
+    if count <= 0:
         logger.warning("[generate_playlist] Invalid count requested")
         return []
     
-    # Flatten tags at the start
     clean_tags = flatten_and_validate_tags(tags)
     logger.debug(f"[generate_playlist] Original tags: {repr(tags)}, Clean tags: {repr(clean_tags)}")
     
@@ -299,7 +309,6 @@ async def generate_playlist(jellyfin_client, count: int, collections: list[str],
         logger.warning("[generate_playlist] No collections provided — falling back to tags.")
         return await generate_random_playlist(jellyfin_client, count, clean_tags)
 
-    # --- Minimal change: keep both preferred (tagged) and fallback (any) per collection
     preferred_by_collection, fallback_by_collection = {}, {}
     used_ids = set()
     
@@ -309,7 +318,7 @@ async def generate_playlist(jellyfin_client, count: int, collections: list[str],
         if not items:
             logger.warning(f"[generate_playlist] No items for '{name}'")
             continue
-        
+                
         preferred = filter_by_tags(items, clean_tags) if clean_tags else list(items)
         fallback  = [it for it in items if it not in preferred]
         preferred_by_collection[name] = preferred

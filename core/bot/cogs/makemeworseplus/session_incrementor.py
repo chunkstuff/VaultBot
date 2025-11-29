@@ -342,14 +342,14 @@ class PlaylistIncrementProcessor:
         )
 
         # Emit appropriate event based on whether it's a completion (longer track) or just advancement (short track)
-        if is_sufficient_listen and not is_short_track:
-            # Only call it "completion" for longer tracks
+        if is_sufficient_listen or is_short_track:
+            # Completion counts when sufficiently listened to or if it is a short track.
             await self.event_dispatcher.emit_track_advance(
                 discord_id, state, prev_index, prev_item, prev_time, item_id
             )
             logger.info(f"[PlaylistSessionTracker] {discord_id} advanced to track {next_idx}")
         else:
-            # For short tracks or skips, it's just a jump/skip
+            # For anything else, it's just a jump/skip
             await self.event_dispatcher.emit_track_jump(
                 discord_id, state, prev_index, prev_item, prev_time, item_id
             )

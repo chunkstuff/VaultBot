@@ -261,12 +261,13 @@ def create_track_advance_embed(event: PlaylistTrackAdvanceEvent, avatar_url: Opt
     time_spent = _format_time_spent(event.seconds_on_from)
     
     description = (
-        f"Advanced **#{event.from_index + 1} → #{event.to_index + 1}/{event.total_tracks}** ({from_title}) {time_spent}\n"
-        f"**Now playing:** {to_title}"
+        f"**Playlist #{event.user_playlist_id}**\n"
+        f"✅ **Track {event.from_index + 1}:** {from_title} {time_spent}\n"
+        f"▶️ **Track {event.to_index + 1}/{event.total_tracks}:** {to_title}"
     )
     
     return _create_base_embed(
-        title="⏭️ Track Advance",
+        title="🎵 Track Complete",
         description=description,
         color=discord.Color.teal(),
         timestamp=event.occurred_at,
@@ -283,8 +284,9 @@ def create_track_jump_embed(event: PlaylistTrackJumpEvent, avatar_url: Optional[
     time_spent = _format_time_spent(event.seconds_on_from)
     
     description = (
-        f"Advanced **#{event.from_index + 1} → #{event.to_index + 1}/{event.total_tracks}** {from_title} {time_spent}\n"
-        f"**Now playing:** {to_title}"
+        f"**Playlist #{event.user_playlist_id}**\n"
+        f"⚠️ **Track {event.from_index + 1}:** {from_title} {time_spent}\n"
+        f"▶️ **Track {event.to_index + 1}/{event.total_tracks}:** {to_title}"
     )
     
     return _create_base_embed(
