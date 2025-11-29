@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 import discord
@@ -5,10 +6,11 @@ from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path("config/config.json")
+ENV_FILE = os.getenv("ENV_FILE_PATH", "config/secrets.env")
 
 
 class Settings(BaseSettings):
@@ -150,9 +152,10 @@ class Settings(BaseSettings):
         except Exception:
             logger.exception("❌ Failed to write config.json")
 
-    class Config:
-        env_file = "config/secrets.env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILE,
+        env_file_encoding="utf-8"
+    )
 
 
 settings = Settings()
