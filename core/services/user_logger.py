@@ -3,9 +3,9 @@ from pathlib import Path
 from datetime import datetime
 import aiofiles
 import asyncio
+from config.settings import settings
 
-LOG_PATH = Path("logs/registrations.jsonl")
-LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+LOG_PATH = Path(settings.REGISTRATION_LOG_PATH)
 
 async def log_registered_user(discord_id: str, discord_username: str, jellyfin_username: str, email: str):
     entry = {

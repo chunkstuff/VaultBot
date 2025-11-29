@@ -6,11 +6,12 @@ from pathlib import Path
 import aiofiles
 import aiofiles.os as aos
 
+from config.settings import settings
 from utils.logger_factory import setup_logger
 
 logger = setup_logger(__name__)
 
-DEFAULT_PATH = Path("logs") / "missing_tags.json"  # relative to CWD
+DEFAULT_PATH = Path(settings.MISSING_TAGS_PATH)
 
 # one lock per metrics file
 _LOCKS: dict[str, asyncio.Lock] = {}

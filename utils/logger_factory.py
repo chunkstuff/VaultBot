@@ -4,8 +4,10 @@ import logging
 import colorlog
 import os
 import sys
+from config.settings import settings
 
-LOG_DIR = "logs"
+
+LOG_DIR = settings.LOG_PATH
 os.makedirs(LOG_DIR, exist_ok=True)
 
 def get_formatter():

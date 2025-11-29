@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # Local API
     SUBSCRIPTION_API_BASE_URL: Annotated[str, Field(description="Base URL for subscription API endpoints")]
 
+    # Paths
+    DB_PATH: Annotated[str, Field(description="Path for database files")]
+    LOG_PATH: Annotated[str, Field(description="Path for application logs")]
+    ERROR_SCREENSHOT_PATH: Annotated[str, Field(description="Path for error screenshots")]
+    REGISTRATION_LOG_PATH: Annotated[str, Field(description="Path for registration log")]
+    MISSING_TAGS_PATH: Annotated[str, Field(description="Path for missing tags metrics")]
 
     @property
     def HEADERS(self) -> dict:
