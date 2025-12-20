@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     NETWORK_CHANNEL: Annotated[int, Field(description="Discord channel ID to send playlist notifications")]
     VAULTPLUS_ROLE: Annotated[int, Field(description="Discord role ID to apply to Vault+ registered users")]
     SUBSCRIBE_ROLE: Annotated[int, Field(description="Discord role ID to apply to Vault subscribers")]
+    STAFF_ROLE: Annotated[int, Field(description="Discord role ID for Staff members")]
+    JUNIOR_STAFF_ROLE: Annotated[int, Field(description="Discord role ID for Junior Staff members")]
     DEVELOPER_ID: Annotated[int, Field(description="Discord user ID of the developer for tagging/errors")]
     OWNER_ID: Annotated[int, Field(description="Discord user ID of the server for admin validation")]
 

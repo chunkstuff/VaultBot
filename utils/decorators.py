@@ -6,8 +6,8 @@ import discord
 import traceback
 import asyncio
 
-# Get logger instance
 logger = setup_logger(__name__)
+
 
 def handle_exceptions(func):
     """
@@ -37,13 +37,68 @@ def handle_exceptions(func):
     else:
         return sync_wrapper
 
-def is_authorised():
+
+def _has_permission(interaction: discord.Interaction, allowed_user_ids: set[int], allowed_role_ids: set[int] = None) -> bool:
+    """
+    Internal helper to check if user has permission.
+    
+    Args:
+        interaction: Discord interaction
+        allowed_user_ids: Set of allowed user IDs (owner, developer, etc)
+        allowed_role_ids: Optional set of allowed role IDs
+    
+    Returns:
+        True if user has permission, False otherwise
+    """
+    # Check user IDs first (fastest)
+    if interaction.user.id in allowed_user_ids:
+        return True
+    
+    # Check roles if provided
+    if allowed_role_ids:
+        user_role_ids = {role.id for role in interaction.user.roles}
+        if allowed_role_ids & user_role_ids:  # If any allowed role is present
+            return True
+    
+    return False
+
+
+def _require_permission(allowed_user_ids: set[int], allowed_role_ids: set[int] = None):
+    """
+    Internal decorator factory for permission checking.
+    
+    Args:
+        allowed_user_ids: Set of allowed user IDs
+        allowed_role_ids: Optional set of allowed role IDs
+    """
     def decorator(func):
         @wraps(func)
         async def wrapper(self, interaction: discord.Interaction, *args, **kwargs):
-            if interaction.user.id not in {settings.DEVELOPER_ID, settings.OWNER_ID}:
+            if not _has_permission(interaction, allowed_user_ids, allowed_role_ids):
                 await interaction.response.send_message("🚫 You are not authorised.", ephemeral=True)
                 return
             return await func(self, interaction, *args, **kwargs)
         return wrapper
     return decorator
+
+
+def is_authorised():
+    """
+    Restrict command to owner and developer only.
+    Use for sensitive administrative commands.
+    """
+    return _require_permission(
+        allowed_user_ids={settings.DEVELOPER_ID, settings.OWNER_ID}
+    )
+
+
+def is_staff():
+    """
+    Allow command access to staff members, owner, and developer.
+    Staff includes: Owner, Developer, Staff role, Junior Staff role.
+    Use for moderation and management commands.
+    """
+    return _require_permission(
+        allowed_user_ids={settings.DEVELOPER_ID, settings.OWNER_ID},
+        allowed_role_ids={settings.STAFF_ROLE, settings.JUNIOR_STAFF_ROLE}
+    )
