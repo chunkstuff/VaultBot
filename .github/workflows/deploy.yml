@@ -122,10 +122,16 @@ jobs:
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
-        # Prepare commit message with proper escaping
-        COMMIT_MSG='${{ github.event.head_commit.message }}'
+        # Get commit message and properly escape it for JSON
+        COMMIT_MSG=$(cat << 'EOF'
+        ${{ github.event.head_commit.message }}
+        EOF
+        )
         
-        # Create JSON payload with code block formatting
+        # Use jq to properly escape the commit message for JSON
+        COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
+        
+        # Create JSON payload
         cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
@@ -135,7 +141,7 @@ jobs:
             "fields": [
               {
                 "name": "Commit",
-                "value": "\`\`\`\n${COMMIT_MSG}\n\`\`\`",
+                "value": ${COMMIT_JSON},
                 "inline": false
               },
               {
@@ -163,10 +169,16 @@ jobs:
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
-        # Prepare commit message with proper escaping
-        COMMIT_MSG='${{ github.event.head_commit.message }}'
+        # Get commit message and properly escape it for JSON
+        COMMIT_MSG=$(cat << 'EOF'
+        ${{ github.event.head_commit.message }}
+        EOF
+        )
         
-        # Create JSON payload with code block formatting
+        # Use jq to properly escape the commit message for JSON
+        COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
+        
+        # Create JSON payload
         cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
@@ -176,7 +188,7 @@ jobs:
             "fields": [
               {
                 "name": "Commit",
-                "value": "\`\`\`\n${COMMIT_MSG}\n\`\`\`",
+                "value": ${COMMIT_JSON},
                 "inline": false
               },
               {
