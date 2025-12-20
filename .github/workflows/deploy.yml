@@ -128,10 +128,10 @@ jobs:
         EOF
         )
         
-        # Use jq to properly escape the commit message for JSON
+        # Use jq to properly escape the commit message for JSON (preserves newlines)
         COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
         
-        # Create JSON payload with code block
+        # Create JSON payload
         cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
@@ -141,7 +141,7 @@ jobs:
             "fields": [
               {
                 "name": "Commit",
-                "value": "\`\`\`\n${COMMIT_MSG}\n\`\`\`",
+                "value": ${COMMIT_JSON},
                 "inline": false
               },
               {
@@ -175,10 +175,10 @@ jobs:
         EOF
         )
         
-        # Use jq to properly escape the commit message for JSON
+        # Use jq to properly escape the commit message for JSON (preserves newlines)
         COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
         
-        # Create JSON payload with code block
+        # Create JSON payload
         cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
@@ -188,7 +188,7 @@ jobs:
             "fields": [
               {
                 "name": "Commit",
-                "value": "\`\`\`\n${COMMIT_MSG}\n\`\`\`",
+                "value": ${COMMIT_JSON},
                 "inline": false
               },
               {
