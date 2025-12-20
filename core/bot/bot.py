@@ -67,6 +67,64 @@ class VaultBot(commands.Bot):
             await cog.send_worse_embed()
             logger.info("🔁 Re-attached and refreshed worse embed.")
 
+    async def on_member_remove(self, member: discord.Member):
+        """
+        Handle when a member leaves the guild.
+        Disables their Jellyfin account to prevent access after leaving.
+        """
+        try:
+            logger.info(f"🚪 Member left guild: {member.name} ({member.id})")
+            
+            # Get the Jellyfin user ID from link_map
+            jellyfin_id = await self.link_map.get_jellyfin_user_id(str(member.id))
+            
+            if not jellyfin_id:
+                logger.debug(f"No Jellyfin account found for {member.name}")
+                return
+            
+            # Check if the Jellyfin account is already disabled
+            user_data = await self.client.api.get_by_jellyfin_user_id(jellyfin_id)
+            is_disabled = user_data.get('Policy', {}).get('IsDisabled', False)
+            
+            if is_disabled:
+                logger.debug(f"Jellyfin account for {member.name} already disabled")
+                return
+            
+            # Disable the Jellyfin account using the existing disable method
+            await self.client.users.disable_vaultplus_user(jellyfin_id)
+            
+            logger.info(
+                f"✅ Disabled Jellyfin account for {member.name} "
+                f"(Jellyfin ID: {jellyfin_id}) - user left guild"
+            )
+            
+            if self.admin_notifier:
+                embed = discord.Embed(
+                    title="🚪 Member Left - Jellyfin Disabled",
+                    description=(
+                        f"**User:** {member.mention} ({member.name})\n"
+                        f"**Jellyfin ID:** `{jellyfin_id}`\n"
+                        f"**Left at:** <t:{int(discord.utils.utcnow().timestamp())}:F>"
+                    ),
+                    color=discord.Color.orange()
+                )
+                embed.set_thumbnail(url=member.display_avatar.url)
+                
+                admin_channel = self.get_channel(settings.ADMIN_CHANNEL)
+                if admin_channel:
+                    await admin_channel.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"❌ Error handling member removal for {member.name} ({member.id}): {e}")
+            logger.exception(e)
+            
+            # Alert admins of the error
+            if self.admin_notifier:
+                await self.admin_notifier.send_admin_alert(
+                    e, 
+                    context=f"on_member_remove for {member.name}"
+                )
+
     async def apply_vaultplus_role(self, discord_user_id: int, discord_username: str):
         # Assign Vault+ role
         try:
@@ -82,7 +140,6 @@ class VaultBot(commands.Bot):
             trace = traceback.format_exc()
             logger.exception(f"❌ Error assigning Vault+ role to {discord_username}: {e}")
             await self.admin_notifier.send_admin_alert(trace, context="bot.apply_vaultplus_role")
-
 
     async def disable_subscriber_downloads(self, interaction: discord.Interaction):
         try:
