@@ -122,9 +122,11 @@ jobs:
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
-        curl -H "Content-Type: application/json" \
-             -X POST \
-             -d @- "$DISCORD_WEBHOOK" <<EOF
+        # Prepare commit message with proper escaping
+        COMMIT_MSG='${{ github.event.head_commit.message }}'
+        
+        # Create JSON payload with code block formatting
+        cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
             "title": "🚀 VaultBot Deployed",
@@ -133,7 +135,7 @@ jobs:
             "fields": [
               {
                 "name": "Commit",
-                "value": "${{ github.event.head_commit.message }}",
+                "value": "\`\`\`\n${COMMIT_MSG}\n\`\`\`",
                 "inline": false
               },
               {
@@ -149,16 +151,23 @@ jobs:
             ]
           }]
         }
-        EOF
+        WEBHOOK_EOF
+        
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d @/tmp/webhook.json \
+             "$DISCORD_WEBHOOK"
     
     - name: Notify Discord on Failure
       if: failure()
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
-        curl -H "Content-Type: application/json" \
-             -X POST \
-             -d @- "$DISCORD_WEBHOOK" <<EOF
+        # Prepare commit message with proper escaping
+        COMMIT_MSG='${{ github.event.head_commit.message }}'
+        
+        # Create JSON payload with code block formatting
+        cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
             "title": "❌ VaultBot Deployment Failed",
@@ -167,7 +176,7 @@ jobs:
             "fields": [
               {
                 "name": "Commit",
-                "value": "${{ github.event.head_commit.message }}",
+                "value": "\`\`\`\n${COMMIT_MSG}\n\`\`\`",
                 "inline": false
               },
               {
@@ -183,4 +192,9 @@ jobs:
             ]
           }]
         }
-        EOF
+        WEBHOOK_EOF
+        
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d @/tmp/webhook.json \
+             "$DISCORD_WEBHOOK"
