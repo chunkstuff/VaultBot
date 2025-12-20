@@ -9,6 +9,73 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Notification job - runs for ALL branches
+  notify:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Notify Discord
+      env:
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+      run: |
+        # Get commit message and properly escape it for JSON
+        COMMIT_MSG=$(cat << 'EOF'
+        ${{ github.event.head_commit.message }}
+        EOF
+        )
+        
+        # Use jq to properly escape the commit message for JSON (preserves newlines)
+        COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
+        
+        # Set title and color based on branch
+        if [ "${{ github.ref_name }}" = "main" ]; then
+          TITLE="🚀 VaultBot Deployed"
+          DESC="Successfully deployed to PiLab"
+          COLOR=5763719  # Green
+        elif [ "${{ github.ref_name }}" = "dev" ]; then
+          TITLE="✅ Build Successful"
+          DESC="Build passed for dev branch"
+          COLOR=3447003  # Blue
+        else
+          TITLE="✅ Build Successful"
+          DESC="Build passed for branch ${{ github.ref_name }}"
+          COLOR=10181046  # Purple
+        fi
+        
+        # Create JSON payload
+        cat > /tmp/webhook.json <<WEBHOOK_EOF
+        {
+          "embeds": [{
+            "title": "${TITLE}",
+            "description": "${DESC}",
+            "color": ${COLOR},
+            "fields": [
+              {
+                "name": "Commit",
+                "value": ${COMMIT_JSON},
+                "inline": false
+              },
+              {
+                "name": "Branch",
+                "value": "${{ github.ref_name }}",
+                "inline": true
+              },
+              {
+                "name": "Author",
+                "value": "${{ github.actor }}",
+                "inline": true
+              }
+            ]
+          }]
+        }
+        WEBHOOK_EOF
+        
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d @/tmp/webhook.json \
+             "$DISCORD_WEBHOOK"
+
+  # Deployment job - only runs for main branch
   deploy:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'  # Only deploy main branch
@@ -121,69 +188,7 @@ jobs:
           echo "🎉 Deployment complete!"
         ENDSSH
     
-    - name: Notify Discord on Success
-      if: success()
-      env:
-        DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
-      run: |
-        # Get commit message and properly escape it for JSON
-        COMMIT_MSG=$(cat << 'EOF'
-        ${{ github.event.head_commit.message }}
-        EOF
-        )
-        
-        # Use jq to properly escape the commit message for JSON (preserves newlines)
-        COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
-        
-        # Set title and color based on branch
-        if [ "${{ github.ref_name }}" = "main" ]; then
-          TITLE="🚀 VaultBot Deployed"
-          DESC="Successfully deployed to PiLab"
-          COLOR=5763719  # Green
-        elif [ "${{ github.ref_name }}" = "dev" ]; then
-          TITLE="✅ Build Successful"
-          DESC="Build passed for dev branch"
-          COLOR=3447003  # Blue
-        else
-          TITLE="✅ Build Successful"
-          DESC="Build passed for branch ${{ github.ref_name }}"
-          COLOR=10181046  # Purple
-        fi
-        
-        # Create JSON payload
-        cat > /tmp/webhook.json <<WEBHOOK_EOF
-        {
-          "embeds": [{
-            "title": "${TITLE}",
-            "description": "${DESC}",
-            "color": ${COLOR},
-            "fields": [
-              {
-                "name": "Commit",
-                "value": ${COMMIT_JSON},
-                "inline": false
-              },
-              {
-                "name": "Branch",
-                "value": "${{ github.ref_name }}",
-                "inline": true
-              },
-              {
-                "name": "Author",
-                "value": "${{ github.actor }}",
-                "inline": true
-              }
-            ]
-          }]
-        }
-        WEBHOOK_EOF
-        
-        curl -H "Content-Type: application/json" \
-             -X POST \
-             -d @/tmp/webhook.json \
-             "$DISCORD_WEBHOOK"
-    
-    - name: Notify Discord on Failure
+    - name: Notify Discord on Deployment Failure
       if: failure()
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
