@@ -9,12 +9,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Notification job - runs for ALL branches
-  notify:
+  # Build notification - runs for non-main branches
+  notify-build:
     runs-on: ubuntu-latest
+    if: github.ref != 'refs/heads/main'
     
     steps:
-    - name: Notify Discord
+    - name: Notify Discord - Build Success
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
@@ -25,11 +26,7 @@ jobs:
         
         COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
         
-        if [ "${{ github.ref_name }}" = "main" ]; then
-          TITLE="🚀 VaultBot Deployed"
-          DESC="Successfully deployed to PiLab"
-          COLOR=5763719
-        elif [ "${{ github.ref_name }}" = "dev" ]; then
+        if [ "${{ github.ref_name }}" = "dev" ]; then
           TITLE="✅ Build Successful"
           DESC="Build passed for dev branch"
           COLOR=3447003
@@ -101,48 +98,51 @@ jobs:
     - name: Deploy to Pi
       run: |
         ssh -o StrictHostKeyChecking=no pilab << 'ENDSSH'
-          set -e  # Exit on any error
+          set -e
           
           echo "🚀 Starting deployment of VaultBot..."
           
-          # Navigate to existing installation
-          cd /home/pluribus/plures/vaultbot
-          
-          # Verify we're in a git repo
-          if [ ! -d ".git" ]; then
-            echo "❌ Not a git repository! Aborting."
-            exit 1
-          fi
-          
+          # Stop the bot (needs sudo, run as chunk)
           echo "🛑 Stopping bot..."
           sudo systemctl stop vaultbot.service
           
-          echo "💾 Creating safety backup..."
-          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-          sudo cp -r /home/pluribus/plures/vaultbot /home/pluribus/plures/vaultbot.backup.$TIMESTAMP
-          
-          echo "📥 Fetching latest changes..."
-          sudo -u pluribus git fetch origin
-          
-          # Get current commit for rollback
-          CURRENT_COMMIT=$(git rev-parse HEAD)
-          echo "📌 Current commit: $CURRENT_COMMIT"
-          
-          echo "🔄 Pulling latest main branch..."
-          # Use merge instead of reset --hard (safer!)
-          if ! sudo -u pluribus git merge origin/main --ff-only; then
-            echo "❌ Merge failed! You may have local changes."
-            echo "Current git status:"
-            git status
-            sudo systemctl start vaultbot.service
-            exit 1
-          fi
-          
-          echo "📦 Updating dependencies..."
-          sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/pip install -r requirements.txt
-          
-          echo "🎭 Updating Playwright..."
-          sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/playwright install chromium
+          # Run deployment as pluribus user
+          sudo su - pluribus << 'PLURIBUS_EOF'
+            set -e
+            
+            cd /home/pluribus/plures/vaultbot
+            
+            # Verify we're in a git repo
+            if [ ! -d ".git" ]; then
+              echo "❌ Not a git repository! Aborting."
+              exit 1
+            fi
+            
+            echo "💾 Creating safety backup..."
+            TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+            cp -r /home/pluribus/plures/vaultbot /home/pluribus/plures/vaultbot.backup.$TIMESTAMP
+            
+            echo "📥 Fetching latest changes..."
+            git fetch origin
+            
+            # Get current commit for rollback
+            CURRENT_COMMIT=$(git rev-parse HEAD)
+            echo "📌 Current commit: $CURRENT_COMMIT"
+            
+            echo "🔄 Pulling latest main branch..."
+            if ! git merge origin/main --ff-only; then
+              echo "❌ Merge failed! You may have local changes."
+              echo "Current git status:"
+              git status
+              exit 1
+            fi
+            
+            echo "📦 Updating dependencies..."
+            /home/pluribus/plures/vaultbot/venv/bin/pip install -r requirements.txt
+            
+            echo "🎭 Updating Playwright..."
+            /home/pluribus/plures/vaultbot/venv/bin/playwright install chromium
+        PLURIBUS_EOF
           
           echo "▶️  Starting bot..."
           sudo systemctl start vaultbot.service
@@ -150,28 +150,39 @@ jobs:
           echo "⏳ Waiting for bot to start..."
           sleep 5
           
-          # Health check - verify bot is actually running
+          # Health check
           if sudo systemctl is-active --quiet vaultbot.service; then
             echo "✅ VaultBot is running!"
             sudo journalctl -u vaultbot.service -n 20 --no-pager
             
-            # Clean up old backup after successful deploy
+            # Clean up backup
             echo "🧹 Cleaning up backup..."
-            sudo rm -rf /home/pluribus/plures/vaultbot.backup.$TIMESTAMP
+            sudo su - pluribus << 'PLURIBUS_EOF'
+              cd /home/pluribus/plures
+              TIMESTAMP=$(ls -t | grep "vaultbot.backup" | head -1 | sed 's/vaultbot.backup.//')
+              if [ -n "$TIMESTAMP" ]; then
+                rm -rf vaultbot.backup.$TIMESTAMP
+              fi
+        PLURIBUS_EOF
             
             echo "🎉 Deployment complete!"
           else
             echo "❌ Bot failed to start! Rolling back..."
             sudo systemctl stop vaultbot.service
             
-            # Rollback to previous commit
-            sudo -u pluribus git reset --hard $CURRENT_COMMIT
-            
-            # Restore from backup if git rollback isn't enough
-            if [ -d "/home/pluribus/plures/vaultbot.backup.$TIMESTAMP" ]; then
-              sudo rm -rf /home/pluribus/plures/vaultbot
-              sudo mv /home/pluribus/plures/vaultbot.backup.$TIMESTAMP /home/pluribus/plures/vaultbot
-            fi
+            # Rollback
+            sudo su - pluribus << 'PLURIBUS_EOF'
+              cd /home/pluribus/plures
+              
+              # Find the backup we just made
+              BACKUP=$(ls -t | grep "vaultbot.backup" | head -1)
+              
+              if [ -n "$BACKUP" ]; then
+                echo "Restoring from $BACKUP..."
+                rm -rf vaultbot
+                mv $BACKUP vaultbot
+              fi
+        PLURIBUS_EOF
             
             sudo systemctl start vaultbot.service
             
@@ -182,7 +193,51 @@ jobs:
           fi
         ENDSSH
     
-    - name: Notify Discord on Deployment Failure
+    - name: Notify Discord - Deployment Success
+      if: success()
+      env:
+        DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+      run: |
+        COMMIT_MSG=$(cat << 'EOF'
+        ${{ github.event.head_commit.message }}
+        EOF
+        )
+        
+        COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
+        
+        cat > /tmp/webhook.json <<WEBHOOK_EOF
+        {
+          "embeds": [{
+            "title": "🚀 VaultBot Deployed",
+            "description": "Successfully deployed to PiLab",
+            "color": 5763719,
+            "fields": [
+              {
+                "name": "Commit",
+                "value": ${COMMIT_JSON},
+                "inline": false
+              },
+              {
+                "name": "Branch",
+                "value": "${{ github.ref_name }}",
+                "inline": true
+              },
+              {
+                "name": "Author",
+                "value": "${{ github.actor }}",
+                "inline": true
+              }
+            ]
+          }]
+        }
+        WEBHOOK_EOF
+        
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d @/tmp/webhook.json \
+             "$DISCORD_WEBHOOK"
+    
+    - name: Notify Discord - Deployment Failure
       if: failure()
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
