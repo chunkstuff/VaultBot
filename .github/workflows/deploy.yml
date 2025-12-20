@@ -5,7 +5,7 @@ on:
     branches: 
       - main
       - dev
-      - 'feat/**'  # All feature branches
+      - 'feat/**'
   workflow_dispatch:
 
 jobs:
@@ -18,31 +18,27 @@ jobs:
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
-        # Get commit message and properly escape it for JSON
         COMMIT_MSG=$(cat << 'EOF'
         ${{ github.event.head_commit.message }}
         EOF
         )
         
-        # Use jq to properly escape the commit message for JSON (preserves newlines)
         COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
         
-        # Set title and color based on branch
         if [ "${{ github.ref_name }}" = "main" ]; then
           TITLE="🚀 VaultBot Deployed"
           DESC="Successfully deployed to PiLab"
-          COLOR=5763719  # Green
+          COLOR=5763719
         elif [ "${{ github.ref_name }}" = "dev" ]; then
           TITLE="✅ Build Successful"
           DESC="Build passed for dev branch"
-          COLOR=3447003  # Blue
+          COLOR=3447003
         else
           TITLE="✅ Build Successful"
           DESC="Build passed for branch ${{ github.ref_name }}"
-          COLOR=10181046  # Purple
+          COLOR=10181046
         fi
         
-        # Create JSON payload
         cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
@@ -78,7 +74,7 @@ jobs:
   # Deployment job - only runs for main branch
   deploy:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'  # Only deploy main branch
+    if: github.ref == 'refs/heads/main'
     
     steps:
     - name: Checkout code
@@ -105,87 +101,85 @@ jobs:
     - name: Deploy to Pi
       run: |
         ssh -o StrictHostKeyChecking=no pilab << 'ENDSSH'
+          set -e  # Exit on any error
+          
           echo "🚀 Starting deployment of VaultBot..."
           
-          DEPLOY_DIR="/tmp/vaultbot-deploy-$(date +%s)"
-          mkdir -p $DEPLOY_DIR
-          sudo chown pluribus:pluribus $DEPLOY_DIR
-          cd $DEPLOY_DIR
+          # Navigate to existing installation
+          cd /home/pluribus/plures/vaultbot
           
-          echo "📥 Cloning repository..."
-          sudo -u pluribus bash -c "cd $DEPLOY_DIR && GIT_SSH_COMMAND='ssh -i /home/pluribus/.ssh/vaultbot_deploy -o StrictHostKeyChecking=no' git clone git@github.com:${{ github.repository }}.git ."
-          sudo mkdir -p /home/pluribus/plures/vaultbot
+          # Verify we're in a git repo
+          if [ ! -d ".git" ]; then
+            echo "❌ Not a git repository! Aborting."
+            exit 1
+          fi
           
           echo "🛑 Stopping bot..."
-          sudo systemctl stop vaultbot.service 2>/dev/null || true
+          sudo systemctl stop vaultbot.service
           
-          if [ -d "/home/pluribus/plures/vaultbot" ]; then
-            sudo cp -r /home/pluribus/plures/vaultbot /home/pluribus/plures/vaultbot.backup
+          echo "💾 Creating safety backup..."
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          sudo cp -r /home/pluribus/plures/vaultbot /home/pluribus/plures/vaultbot.backup.$TIMESTAMP
+          
+          echo "📥 Fetching latest changes..."
+          sudo -u pluribus git fetch origin
+          
+          # Get current commit for rollback
+          CURRENT_COMMIT=$(git rev-parse HEAD)
+          echo "📌 Current commit: $CURRENT_COMMIT"
+          
+          echo "🔄 Pulling latest main branch..."
+          # Use merge instead of reset --hard (safer!)
+          if ! sudo -u pluribus git merge origin/main --ff-only; then
+            echo "❌ Merge failed! You may have local changes."
+            echo "Current git status:"
+            git status
+            sudo systemctl start vaultbot.service
+            exit 1
           fi
           
-          echo "📋 Deploying code..."
-          sudo rsync -av --delete \
-            --exclude='.git' \
-            --exclude='__pycache__' \
-            --exclude='*.pyc' \
-            --exclude='.env' \
-            --exclude='.env.example' \
-            --exclude='config/secrets.env' \
-            --exclude='config/collections_and_tags.json' \
-            --exclude='config/config.json' \
-            --exclude='*.log' \
-            --exclude='README.md' \
-            --exclude='venv' \
-            --exclude='db/*.db' \
-            --exclude='logs/*' \
-            $DEPLOY_DIR/ \
-            /home/pluribus/plures/vaultbot/
+          echo "📦 Updating dependencies..."
+          sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/pip install -r requirements.txt
           
-          if [ -f "/home/pluribus/plures/vaultbot.backup/.env" ]; then
-            sudo cp /home/pluribus/plures/vaultbot.backup/.env /home/pluribus/plures/vaultbot/.env
-          fi
-          
-          sudo chown -R pluribus:pluribus /home/pluribus/plures/vaultbot/
-          
-          sudo mkdir -p /home/pluribus/shared
-          sudo mkdir -p /home/pluribus/logs
-          sudo chown -R pluribus:pluribus /home/pluribus/shared
-          sudo chown -R pluribus:pluribus /home/pluribus/logs
-          
-          echo "📦 Setting up virtual environment..."
-          if [ ! -d "/home/pluribus/plures/vaultbot/venv" ]; then
-            sudo -u pluribus python3 -m venv /home/pluribus/plures/vaultbot/venv
-          fi
-          
-          sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/pip install --upgrade pip
-          sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/pip install -r /home/pluribus/plures/vaultbot/requirements.txt
-
-          echo "🎭 Installing Playwright browsers..."
-          sudo /home/pluribus/plures/vaultbot/venv/bin/playwright install-deps chromium
+          echo "🎭 Updating Playwright..."
           sudo -u pluribus /home/pluribus/plures/vaultbot/venv/bin/playwright install chromium
           
           echo "▶️  Starting bot..."
           sudo systemctl start vaultbot.service
           
-          sleep 3
+          echo "⏳ Waiting for bot to start..."
+          sleep 5
+          
+          # Health check - verify bot is actually running
           if sudo systemctl is-active --quiet vaultbot.service; then
-            echo "✅ VaultBot deployed successfully!"
-            sudo journalctl -u vaultbot.service -n 10 --no-pager
+            echo "✅ VaultBot is running!"
+            sudo journalctl -u vaultbot.service -n 20 --no-pager
+            
+            # Clean up old backup after successful deploy
+            echo "🧹 Cleaning up backup..."
+            sudo rm -rf /home/pluribus/plures/vaultbot.backup.$TIMESTAMP
+            
+            echo "🎉 Deployment complete!"
           else
-            echo "❌ Deployment failed! Rolling back..."
+            echo "❌ Bot failed to start! Rolling back..."
             sudo systemctl stop vaultbot.service
-            sudo rm -rf /home/pluribus/plures/vaultbot
-            if [ -d "/home/pluribus/plures/vaultbot.backup" ]; then
-              sudo mv /home/pluribus/plures/vaultbot.backup /home/pluribus/plures/vaultbot
-              sudo systemctl start vaultbot.service
+            
+            # Rollback to previous commit
+            sudo -u pluribus git reset --hard $CURRENT_COMMIT
+            
+            # Restore from backup if git rollback isn't enough
+            if [ -d "/home/pluribus/plures/vaultbot.backup.$TIMESTAMP" ]; then
+              sudo rm -rf /home/pluribus/plures/vaultbot
+              sudo mv /home/pluribus/plures/vaultbot.backup.$TIMESTAMP /home/pluribus/plures/vaultbot
             fi
+            
+            sudo systemctl start vaultbot.service
+            
+            echo "📋 Recent logs:"
+            sudo journalctl -u vaultbot.service -n 50 --no-pager
+            
             exit 1
           fi
-          
-          sudo rm -rf $DEPLOY_DIR
-          sudo rm -rf /home/pluribus/plures/vaultbot.backup
-          
-          echo "🎉 Deployment complete!"
         ENDSSH
     
     - name: Notify Discord on Deployment Failure
@@ -193,21 +187,18 @@ jobs:
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
-        # Get commit message and properly escape it for JSON
         COMMIT_MSG=$(cat << 'EOF'
         ${{ github.event.head_commit.message }}
         EOF
         )
         
-        # Use jq to properly escape the commit message for JSON (preserves newlines)
         COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
         
-        # Create JSON payload
         cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
             "title": "❌ VaultBot Deployment Failed",
-            "description": "Deployment to PiLab failed",
+            "description": "Deployment to PiLab failed and was rolled back",
             "color": 15158332,
             "fields": [
               {
