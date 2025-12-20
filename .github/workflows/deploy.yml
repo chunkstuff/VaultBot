@@ -2,12 +2,16 @@ name: Deploy VaultBot to PiLab
 
 on:
   push:
-    branches: [ main ]
+    branches: 
+      - main
+      - dev
+      - 'feat/**'  # All feature branches
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'  # Only deploy main branch
     
     steps:
     - name: Checkout code
@@ -122,18 +126,41 @@ jobs:
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
-        curl -H "Content-Type: application/json" \
-             -X POST \
-             -d @- "$DISCORD_WEBHOOK" <<EOF
+        # Get commit message and properly escape it for JSON
+        COMMIT_MSG=$(cat << 'EOF'
+        ${{ github.event.head_commit.message }}
+        EOF
+        )
+        
+        # Use jq to properly escape the commit message for JSON (preserves newlines)
+        COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
+        
+        # Set title and color based on branch
+        if [ "${{ github.ref_name }}" = "main" ]; then
+          TITLE="🚀 VaultBot Deployed"
+          DESC="Successfully deployed to PiLab"
+          COLOR=5763719  # Green
+        elif [ "${{ github.ref_name }}" = "dev" ]; then
+          TITLE="✅ Build Successful"
+          DESC="Build passed for dev branch"
+          COLOR=3447003  # Blue
+        else
+          TITLE="✅ Build Successful"
+          DESC="Build passed for branch ${{ github.ref_name }}"
+          COLOR=10181046  # Purple
+        fi
+        
+        # Create JSON payload
+        cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
-            "title": "🚀 VaultBot Deployed",
-            "description": "Successfully deployed to PiLab",
-            "color": 5763719,
+            "title": "${TITLE}",
+            "description": "${DESC}",
+            "color": ${COLOR},
             "fields": [
               {
                 "name": "Commit",
-                "value": "${{ github.event.head_commit.message }}",
+                "value": ${COMMIT_JSON},
                 "inline": false
               },
               {
@@ -142,23 +169,36 @@ jobs:
                 "inline": true
               },
               {
-                "name": "Deployed by",
+                "name": "Author",
                 "value": "${{ github.actor }}",
                 "inline": true
               }
             ]
           }]
         }
-        EOF
+        WEBHOOK_EOF
+        
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d @/tmp/webhook.json \
+             "$DISCORD_WEBHOOK"
     
     - name: Notify Discord on Failure
       if: failure()
       env:
         DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
       run: |
-        curl -H "Content-Type: application/json" \
-             -X POST \
-             -d @- "$DISCORD_WEBHOOK" <<EOF
+        # Get commit message and properly escape it for JSON
+        COMMIT_MSG=$(cat << 'EOF'
+        ${{ github.event.head_commit.message }}
+        EOF
+        )
+        
+        # Use jq to properly escape the commit message for JSON (preserves newlines)
+        COMMIT_JSON=$(echo "$COMMIT_MSG" | jq -Rs .)
+        
+        # Create JSON payload
+        cat > /tmp/webhook.json <<WEBHOOK_EOF
         {
           "embeds": [{
             "title": "❌ VaultBot Deployment Failed",
@@ -167,7 +207,7 @@ jobs:
             "fields": [
               {
                 "name": "Commit",
-                "value": "${{ github.event.head_commit.message }}",
+                "value": ${COMMIT_JSON},
                 "inline": false
               },
               {
@@ -183,4 +223,9 @@ jobs:
             ]
           }]
         }
-        EOF
+        WEBHOOK_EOF
+        
+        curl -H "Content-Type: application/json" \
+             -X POST \
+             -d @/tmp/webhook.json \
+             "$DISCORD_WEBHOOK"
