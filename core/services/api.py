@@ -120,25 +120,29 @@ class JellyfinAPI:
         """Get user information by Jellyfin user ID."""
         return await self.get(f"Users/{user_id}")
 
-    async def disable_downloads(self, user_id: str) -> Dict[str, Any]:
-        """Disable content downloading for a user."""
-        payload = {
-            f"userId": user_id, 
-            "EnableContentDownloading": False,
-            "AuthenticationProviderId": settings.VAULTPLUS_AUTH,
-            "PasswordResetProviderId": settings.VAULTPLUS_PWRS,
-        }
-        return await self.post(f"Users/{user_id}/Policy", data=payload)
-
-    async def disable_user(self, user_id: str) -> Dict[str, Any]:
-        """Disable a user account."""
+    async def toggle_downloads(self, user_id: str, disabled: bool) -> Dict[str, Any]:
+        """Enable or disable content downloading for a user."""
         payload = {
             f"userId": user_id,
-            "IsDisabled": True,
+            "EnableContentDownloading": not disabled,
             "AuthenticationProviderId": settings.VAULTPLUS_AUTH,
             "PasswordResetProviderId": settings.VAULTPLUS_PWRS,
         }
-        logger.warning(f'{user_id} has been disabled.')
+        action = "disabled" if disabled else "enabled"
+        logger.info(f'Downloads {action} for {user_id}')
+        return await self.post(f"/Users/{user_id}/Policy", data=payload)
+
+    async def toggle_user_status(self, user_id: str, disabled: bool) -> Dict[str, Any]:
+        """Enable or disable a user account."""
+        payload = {
+            f"userId": user_id,
+            "IsDisabled": disabled,
+            "AuthenticationProviderId": settings.VAULTPLUS_AUTH,
+            "PasswordResetProviderId": settings.VAULTPLUS_PWRS,
+        }
+        action = "disabled" if disabled else "enabled"
+        log_level = logger.warning if disabled else logger.info
+        log_level(f'{user_id} has been {action}.')
         return await self.post(f"/Users/{user_id}/Policy", data=payload)
 
     async def get_sessions(self) -> List[Dict[str, Any]]:

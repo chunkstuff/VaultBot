@@ -148,7 +148,7 @@ class VaultBot(commands.Bot):
             logger.info(f'DiscordID: {discord_id}; JellyfinID: {jellyfin_id}')
             if jellyfin_id:
                 await asyncio.sleep(0.5)
-                await self.client.users.api.disable_downloads(jellyfin_id)
+                await self.client.users.disable_downloads(jellyfin_id)
                 logger.info(f"Downloads disabled for Jellyfin user {jellyfin_id} (Discord: {interaction.user})")
         except Exception as e:
             trace = traceback.format_exc()

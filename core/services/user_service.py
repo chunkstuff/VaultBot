@@ -74,8 +74,21 @@ class UserService:
     async def get_user_by_jellyfin_id(self, user_id: str) -> dict:
         return await self.api.get(f"Users/{user_id}")
 
-    async def disable_vaultplus_user(self, user_id: str):
-        return await self.api.disable_user(user_id)
+    async def disable_vaultplus_user(self, user_id: str) -> dict:
+        """Disable a user account."""
+        return await self.api.toggle_user_status(user_id, disabled=True)
+
+    async def enable_vaultplus_user(self, user_id: str) -> dict:
+        """Enable a user account."""
+        return await self.api.toggle_user_status(user_id, disabled=False)
+
+    async def disable_downloads(self, user_id: str) -> dict:
+        """Disable content downloading for a user."""
+        return await self.api.toggle_downloads(user_id, disabled=True)
+
+    async def enable_downloads(self, user_id: str) -> dict:
+        """Enable content downloading for a user."""
+        return await self.api.toggle_downloads(user_id, disabled=False)
 
     async def get_user_by_jellyfin_username(self, username: str) -> dict:
         users = await self.api.get("Users")

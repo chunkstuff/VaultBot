@@ -30,15 +30,6 @@ class RegisterCog(commands.Cog):
                     profile_picture_url=profile_picture_url,
                 )
 
-            has_role = any(role.id == settings.SUBSCRIBE_ROLE for role in discord_user.roles)
-            logger.info(f'Subscriber? {has_role}')
-            if has_role:
-                discord_id = str(interaction.user.id)
-                jellyfin_id = await self.bot.user_service.get_jellyfin_user_id(discord_id)
-                logger.info(f'DiscordID: {discord_id}; JellyfinID: {jellyfin_id}')
-                if jellyfin_id:
-                    self.bot.user_service.api.disable_downloads(jellyfin_id)
-                    logger.info(f"Downloads disabled for Jellyfin user {jellyfin_id} (Discord: {discord_user})")
         except Exception:
             trace = traceback.format_exc()
             logger.exception("Unhandled exception in register command")
