@@ -71,6 +71,7 @@ async def start_bot():
         await bot.load_extension("core.bot.cogs.vaultpulse")
         await bot.load_extension("core.bot.cogs.makemeworseplus")
         await bot.load_extension("core.bot.cogs.subscription_tracker")
+        await bot.load_extension("core.bot.cogs.vaultplus_admin")
 
         # Create your bot and any background tasks
         bot_task = asyncio.create_task(bot.start(settings.DISCORD_TOKEN))
