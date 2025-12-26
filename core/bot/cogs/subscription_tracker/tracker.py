@@ -200,6 +200,11 @@ class SubscriptionTracker(commands.Cog):
     @tasks.loop(minutes=5)
     async def process_subscriptions(self):
         """Main task to process expired and newly active users"""
+    # Skip in test mode to avoid affecting production Jellyfin accounts
+        if settings.TEST_MODE:
+            logger.debug("[TEST_MODE] Skipping subscription processing - test mode active")
+            return
+            
         try:
             current_time = datetime.utcnow().timestamp()
             

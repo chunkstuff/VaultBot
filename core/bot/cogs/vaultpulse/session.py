@@ -5,6 +5,7 @@ from discord.ext import tasks, commands
 from datetime import datetime, timedelta
 
 from utils.logger_factory import setup_logger
+from core.bot.test_helpers import get_guild
 from .buffer import BufferManager
 from .user import UserSync
 from .item_sync import ItemSync

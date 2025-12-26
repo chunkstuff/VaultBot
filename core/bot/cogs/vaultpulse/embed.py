@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 from config.time_helpers import format_ticks
 from config.settings import settings
 from utils.logger_factory import setup_logger
+from core.bot.test_helpers import get_guild
 
 logger = setup_logger(__name__)
 
@@ -39,7 +40,7 @@ class EmbedBuilder:
             embed = self._create_embed(active, streaming, now_listening, recent_users, all_users, timestamp, top_listener_text)
 
             streamers.sort(key=self._stream_sort_key)
-            guild = self.bot.get_guild(settings.GUILD_ID)
+            guild = get_guild(self.bot)
             return await self._populate_streamer_fields(streamers, embed, guild)
         except Exception as e:
             logger.error(f'Unexpected error! {e}')
@@ -155,8 +156,11 @@ class EmbedBuilder:
             ),
             color=0xff4757
         )
-
     async def _populate_streamer_fields(self, streamers, embed, guild):
+        # Ensure we have a valid guild in test mode
+        if not guild:
+            guild = get_guild(self.bot)
+        
         for s in streamers[:24]:
             jf_id = s.get("UserId")
             mention = await self._resolve_discord_mention(jf_id, guild)

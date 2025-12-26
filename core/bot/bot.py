@@ -8,6 +8,7 @@ from discord import app_commands, Interaction
 
 from core.jellyfin_client import JellyfinClient
 from core.bot.cogs.login.embed import send_login_embed
+from core.bot.test_helpers import get_guild
 from core.bot.cogs.register.embed import send_register_embed
 from core.bot.cogs.register.state import registration_state
 from config.settings import settings
@@ -72,6 +73,11 @@ class VaultBot(commands.Bot):
         Handle when a member leaves the guild.
         Disables their Jellyfin account to prevent access after leaving.
         """
+        # Skip in test mode to avoid affecting production Jellyfin accounts
+        if settings.TEST_MODE:
+            logger.debug(f"[TEST_MODE] Skipping account disable for {member.name} - test mode active")
+            return
+
         try:
             logger.info(f"🚪 Member left guild: {member.name} ({member.id})")
             
@@ -128,8 +134,8 @@ class VaultBot(commands.Bot):
     async def apply_vaultplus_role(self, discord_user_id: int, discord_username: str):
         # Assign Vault+ role
         try:
-            guild = discord.utils.get(self.guilds, id=settings.GUILD_ID)
-            member = guild.get_member(int(discord_user_id))
+            guild = get_guild(self)
+            member = guild.get_member(int(discord_user_id)) if guild else None
             role = discord.utils.get(guild.roles, id=settings.VAULTPLUS_ROLE)
             if guild and member and role:
                 await member.add_roles(role, reason="Registered for Vault+")
@@ -164,7 +170,16 @@ class VaultBot(commands.Bot):
         profile_picture_url: str | None = None,
         email: str | None = None,
         password: str | None = None,
-    ) -> str:        
+    ) -> str:
+        # Block registration in test mode to avoid creating production accounts
+        if settings.TEST_MODE:
+            logger.info(f"[TEST_MODE] Blocked registration attempt: {jellyfin_username} - test mode active")
+            return (
+                "🧪 **Test Mode Active**\n"
+                "Registration is disabled in test mode to protect production accounts.\n\n"
+                "-# This bot instance is running in test mode."
+            )
+
         lock = self.client.users.user_locks[discord_user_id]
         if lock.locked():
             logger.info(f"Discord user {discord_username} ({discord_user_id}) already registering as Vault+ user '{jellyfin_username}'")
