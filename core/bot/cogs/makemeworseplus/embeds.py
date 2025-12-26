@@ -15,6 +15,7 @@ from core.events.playlist_events import (
     PlaylistSessionWaitingEvent,
     PlaylistSessionResumedEvent
 )
+from utils.decorators import add_getworse_promotion
 
 def _create_base_embed(
     title: str, 
@@ -136,6 +137,7 @@ def _format_playlist_items(items: List[dict], current_index: Optional[int] = Non
 # Creation / Completion embeds
 # ------------------------
 
+@add_getworse_promotion
 def create_playlist_embed(event: PlaylistCreateEvent, avatar_url: Optional[str] = None, 
                          playlist_items: Optional[List[dict]] = None) -> discord.Embed:
     """Create enhanced embed for playlist creation with track listing"""
@@ -181,6 +183,7 @@ def create_playlist_embed(event: PlaylistCreateEvent, avatar_url: Optional[str] 
     
     return embed
 
+@add_getworse_promotion
 def create_completion_embed(event: PlaylistCompleteEvent, nth_playlist: int = 1, 
                            avatar_url: Optional[str] = None) -> discord.Embed:
     """Create minimal embed for playlist completion"""
@@ -206,6 +209,7 @@ def create_completion_embed(event: PlaylistCompleteEvent, nth_playlist: int = 1,
 # Runtime embeds
 # ------------------------
 
+@add_getworse_promotion
 def create_start_embed(event: PlaylistStartEvent, avatar_url: Optional[str] = None,
                       playlist_items: Optional[List[dict]] = None) -> discord.Embed:
     """Enhanced "now playing" embed with full playlist view"""
@@ -254,6 +258,7 @@ def create_start_embed(event: PlaylistStartEvent, avatar_url: Optional[str] = No
     
     return embed
 
+@add_getworse_promotion
 def create_track_advance_embed(event: PlaylistTrackAdvanceEvent, avatar_url: Optional[str] = None) -> discord.Embed:
     """Quiet update when the user moves to the next track within the same playlist"""
     from_title = _format_track_title(event.from_item_title, event.from_item_id)
@@ -277,6 +282,7 @@ def create_track_advance_embed(event: PlaylistTrackAdvanceEvent, avatar_url: Opt
         session_id=event.session_id
     )
 
+@add_getworse_promotion
 def create_track_jump_embed(event: PlaylistTrackJumpEvent, avatar_url: Optional[str] = None) -> discord.Embed:
     """Quiet update when the user skips/jumps tracks"""
     from_title = _format_track_title(event.from_item_title, event.from_item_id)
@@ -300,6 +306,7 @@ def create_track_jump_embed(event: PlaylistTrackJumpEvent, avatar_url: Optional[
         session_id=event.session_id
     )
 
+@add_getworse_promotion
 def create_switch_away_embed(
     event: PlaylistSwitchAwayEvent,
     *,
@@ -329,6 +336,7 @@ def create_switch_away_embed(
         session_id=event.session_id
     )
 
+@add_getworse_promotion
 def create_session_abandoned_embed(event: PlaylistSessionAbandonedEvent, avatar_url: Optional[str] = None) -> discord.Embed:
     """Create embed when user abandons a playlist session"""
     last_track = _format_track_title(event.last_item_title, event.last_item_id, max_length=40)
@@ -350,6 +358,7 @@ def create_session_abandoned_embed(event: PlaylistSessionAbandonedEvent, avatar_
         session_id=event.session_id
     )
 
+@add_getworse_promotion
 def create_session_paused_embed(event: PlaylistSessionPausedEvent, avatar_url: Optional[str] = None) -> discord.Embed:
     """Create embed for session paused (5 minutes absent)"""
     track_title = _format_track_title(event.current_item_title, event.current_item_id, max_length=40)
@@ -370,6 +379,7 @@ def create_session_paused_embed(event: PlaylistSessionPausedEvent, avatar_url: O
         session_id=event.session_id
     )
 
+@add_getworse_promotion
 def create_session_waiting_embed(event: PlaylistSessionWaitingEvent, avatar_url: Optional[str] = None) -> discord.Embed:
     """Create embed for session waiting for abandonment (15+ minutes absent)"""
     track_title = _format_track_title(event.current_item_title, event.current_item_id, max_length=40)
@@ -391,6 +401,7 @@ def create_session_waiting_embed(event: PlaylistSessionWaitingEvent, avatar_url:
         session_id=event.session_id
     )
 
+@add_getworse_promotion
 def create_session_resumed_embed(event: PlaylistSessionResumedEvent, avatar_url: Optional[str] = None) -> discord.Embed:
     """Create embed for session resumed after being paused/waiting"""
     track_title = _format_track_title(event.current_item_title, event.current_item_id, max_length=40)

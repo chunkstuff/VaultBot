@@ -102,3 +102,20 @@ def is_staff():
         allowed_user_ids={settings.DEVELOPER_ID, settings.OWNER_ID},
         allowed_role_ids={settings.STAFF_ROLE, settings.JUNIOR_STAFF_ROLE}
     )
+
+def add_getworse_promotion(func):
+    """
+    Decorator to add Get Worse channel promotion field as the last field in embed.
+    Use on embed creation functions to encourage playlist creation.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        embed = func(*args, **kwargs)
+        # Add promotion field as the very last field
+        embed.add_field(
+            name="",
+            value=f"👀 Want your own playlist? <#{settings.WORSE_PLUS_CHANNEL}>",
+            inline=False
+        )
+        return embed
+    return wrapper
