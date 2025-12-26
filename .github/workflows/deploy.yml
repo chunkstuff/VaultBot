@@ -5,6 +5,7 @@ on:
     branches: 
       - main
       - dev
+      - vaultplus-admin-commands
       - 'feat/**'
   workflow_dispatch:
 
