@@ -90,6 +90,10 @@ class UserService:
         """Enable content downloading for a user."""
         return await self.api.toggle_downloads(user_id, disabled=False)
 
+    async def reset_password(self, user_id) -> dict:
+        """Reset a user password."""
+        return await self.api.reset_password(user_id)
+
     async def get_user_by_jellyfin_username(self, username: str) -> dict:
         users = await self.api.get("Users")
         for user in users:

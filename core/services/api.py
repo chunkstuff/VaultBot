@@ -107,6 +107,17 @@ class JellyfinAPI:
             "IsAdmin": is_admin
         })
 
+    async def reset_password(self, user_id: str) -> Dict[str, Any]:
+        from utils.validation import generate_password
+        new_password = generate_password()
+        url =f"/Users/{user_id}/Password"
+        try:
+            await self.post(url, data={"NewPw": new_password})
+            return {"success": True, "new_password": new_password}
+        except Exception as e:
+            logger.error(f"Failed to reset password for user {user_id}: {e}")
+            return {"success": False, "error": str(e)}
+
     async def fetch_item_detail(self, item_id: str, user_id: str = settings.JELLYFIN_USER) -> Optional[Dict[str, Any]]:
         """Get detailed information about a media item. Returns None on error."""
         try:
