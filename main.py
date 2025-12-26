@@ -66,7 +66,7 @@ async def start_bot():
         )
         admin_notifier.bot = bot
 
-        await bot.load_extension("core.bot.cogs.register")
+        # await bot.load_extension("core.bot.cogs.register")
         await bot.load_extension("core.bot.cogs.login")
         await bot.load_extension("core.bot.cogs.vaultpulse")
         await bot.load_extension("core.bot.cogs.makemeworseplus")

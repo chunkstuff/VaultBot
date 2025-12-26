@@ -14,6 +14,9 @@ ENV_FILE = os.getenv("ENV_FILE_PATH", "config/secrets.env")
 
 
 class Settings(BaseSettings):
+    # Test mode flag
+    TEST_MODE: Annotated[bool, Field(description="Enable test mode (relaxed guild checks)")] = False
+
     # Jellyfin config
     JELLYFIN_URL: Annotated[str, Field(description="Base URL for the Jellyfin server")]
     API_KEY: Annotated[str, Field(description="API key for Jellyfin")]
