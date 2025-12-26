@@ -9,7 +9,7 @@ from utils.logger_factory import setup_logger
 
 logger = setup_logger(__name__)
 
-class VaultPlusAdmin(commands.GroupCog, name="vaultplusadmin"):
+class VaultPlusAdmin(commands.GroupCog, name="vault"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -359,5 +359,112 @@ class VaultPlusAdmin(commands.GroupCog, name="vaultplusadmin"):
             logger.exception(f"Error getting user info for {user}")
             await interaction.followup.send(
                 f"❌ Error retrieving user info: {str(e)}",
+                ephemeral=True
+            )
+
+    @app_commands.command(name="reset_password", description="Reset a user's Vault+ password")
+    @app_commands.describe(user="The Discord user whose password to reset")
+    @is_staff()
+    async def reset_password(self, interaction: Interaction, user: discord.Member):
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            discord_id = str(user.id)
+            
+            # Check if user has linked Jellyfin account
+            jellyfin_id = await self.bot.link_map.get_jellyfin_user_id(discord_id)
+            
+            if not jellyfin_id:
+                await interaction.followup.send(
+                    f"❌ {user.mention} does not have a linked Vault+ account.",
+                    ephemeral=True
+                )
+                return
+            
+            # Get Jellyfin username
+            jellyfin_user = await self.bot.client.users.get_user_by_jellyfin_id(jellyfin_id)
+            if not jellyfin_user:
+                await interaction.followup.send(
+                    f"⚠️ Jellyfin account not found (ID: {jellyfin_id})",
+                    ephemeral=True
+                )
+                return
+            
+            username = jellyfin_user.get('Name', 'Unknown')
+            
+            # Reset password via UserService
+            result = await self.bot.client.users.reset_password(jellyfin_id)
+            
+            if not result.get('success'):
+                error = result.get('error', 'Unknown error')
+                await interaction.followup.send(
+                    f"❌ Failed to reset password: {error}",
+                    ephemeral=True
+                )
+                return
+            
+            new_password = result.get('new_password')
+            
+            # Try to DM the user with new credentials
+            dm_sent = False
+            try:
+                credentials_embed = discord.Embed(
+                    title="🔑 Vault+ Password Reset",
+                    description=(
+                        f"Your Vault+ password has been reset by a staff member.\n\n"
+                        f"**Username:** `{username}`\n"
+                        f"**New Password:** `{new_password}`\n\n"
+                        f"**Login:** https://members.thevault.locker"
+                    ),
+                    color=discord.Color.gold()
+                )
+                credentials_embed.set_footer(text="Please change your password after logging in.")
+                
+                await user.send(embed=credentials_embed)
+                dm_sent = True
+                logger.info(f"Password reset for '{username}' - credentials sent via DM")
+                
+            except discord.Forbidden:
+                logger.warning(f"Could not DM {user} - showing credentials to staff instead")
+            
+            # Send confirmation to staff
+            if dm_sent:
+                # User got DM - just confirm
+                staff_embed = discord.Embed(
+                    title="✅ Password Reset",
+                    description=f"Successfully reset password for {user.mention}",
+                    color=discord.Color.green()
+                )
+                staff_embed.add_field(name="Jellyfin Username", value=f"`{username}`", inline=True)
+                staff_embed.add_field(name="Credentials Sent", value="✅ Via DM", inline=True)
+            else:
+                # Couldn't DM - show password to staff
+                staff_embed = discord.Embed(
+                    title="✅ Password Reset",
+                    description=(
+                        f"Successfully reset password for {user.mention}\n\n"
+                        f"⚠️ **Could not DM user** - please share these credentials:\n\n"
+                        f"**Username:** `{username}`\n"
+                        f"**New Password:** `{new_password}`\n"
+                        f"**Login:** https://members.thevault.locker"
+                    ),
+                    color=discord.Color.gold()
+                )
+            
+            await interaction.followup.send(embed=staff_embed, ephemeral=True)
+            
+            # Notify admin channel
+            if self.bot.admin_notifier:
+                await self.bot.admin_notifier.send_generic_notice(
+                    title="🔑 Password Reset",
+                    message=f"Password reset for **{username}** ({user.mention}) by <@{interaction.user.id}>",
+                    color=discord.Color.gold()
+                )
+            
+        except Exception as e:
+            logger.error(f"Error resetting password for {user}: {e}")
+            logger.error(traceback.format_exc())
+            await interaction.followup.send(
+                f"❌ Error resetting password: {e}",
                 ephemeral=True
             )
