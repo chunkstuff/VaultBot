@@ -91,7 +91,10 @@ class Settings(BaseSettings):
     def SUBSCRIPTION_ENDPOINTS(self) -> dict:
         return {
             "expired": f"{self.SUBSCRIPTION_API_BASE_URL}/api/expired-subscribers",
-            "active": f"{self.SUBSCRIPTION_API_BASE_URL}/api/newly-active-subscribers"
+            "active": f"{self.SUBSCRIPTION_API_BASE_URL}/api/newly-active-subscribers",
+            "vault_check": f"{self.SUBSCRIPTION_API_BASE_URL}/api/vault",
+            "vault_upgrades": f"{self.SUBSCRIPTION_API_BASE_URL}/api/vault-upgrades"
+
         }
 
     @property 

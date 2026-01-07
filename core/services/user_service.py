@@ -2,6 +2,7 @@
 import asyncio
 from aiohttp import ClientResponseError
 from collections import defaultdict
+from typing import Dict, Any, Optional, List
 from errors.exceptions import (
     DiscordAlreadyLinkedSameUsername,
     DiscordAlreadyLinkedDifferentUsername,
@@ -31,7 +32,7 @@ class UserService:
             # Check if Discord ID is already linked
             existing_jellyfin_id = await self.linker.get_jellyfin_user_id(discord_id)
             if existing_jellyfin_id:
-                jellyfin_user = await self.api.get_by_jellyfin_user_id(existing_jellyfin_id)
+                jellyfin_user = await self.get_user_by_jellyfin_id(existing_jellyfin_id)
                 existing_username = jellyfin_user['Name']
                 
                 if existing_username == discord_username:
@@ -70,44 +71,62 @@ class UserService:
                 await self.admin_notifier.send_admin_alert(e, context="User Registration")
             raise
 
-    # CORE JELLYFIN API METHODS (keep these)
-    async def get_user_by_jellyfin_id(self, user_id: str) -> dict:
-        return await self.api.get(f"Users/{user_id}")
+    # === JELLYFIN API METHODS ===
+    
+    async def get_user_by_jellyfin_id(self, user_id: str) -> Dict[str, Any]:
+        """Get user information by Jellyfin user ID."""
+        return await self.api.get_by_jellyfin_user_id(user_id)
 
-    async def disable_vaultplus_user(self, user_id: str) -> dict:
-        """Disable a user account."""
-        return await self.api.toggle_user_status(user_id, disabled=True)
-
-    async def enable_vaultplus_user(self, user_id: str) -> dict:
-        """Enable a user account."""
-        return await self.api.toggle_user_status(user_id, disabled=False)
-
-    async def disable_downloads(self, user_id: str) -> dict:
-        """Disable content downloading for a user."""
-        return await self.api.toggle_downloads(user_id, disabled=True)
-
-    async def enable_downloads(self, user_id: str) -> dict:
-        """Enable content downloading for a user."""
-        return await self.api.toggle_downloads(user_id, disabled=False)
-
-    async def reset_password(self, user_id) -> dict:
-        """Reset a user password."""
-        return await self.api.reset_password(user_id)
-
-    async def get_user_by_jellyfin_username(self, username: str) -> dict:
+    async def get_user_by_jellyfin_username(self, username: str) -> Dict[str, Any]:
+        """Get user by Jellyfin username."""
         users = await self.api.get("Users")
         for user in users:
             if user.get("Name") == username:
                 return user
         raise ClientResponseError(request_info=None, history=None, status=404, message="User not found", headers=None)
 
-    # SIMPLIFIED USER LINKING METHODS (delegate to HotLinkManager)
-    async def get_jellyfin_user_id(self, discord_id: str) -> str | None:
-        """Get Jellyfin user ID for a Discord user"""
+    async def get_all_users(self) -> List[Dict[str, Any]]:
+        """Get all Jellyfin users."""
+        return await self.api.get("Users")
+
+    async def get_sessions(self) -> List[Dict[str, Any]]:
+        """Get active Jellyfin sessions."""
+        return await self.api.get_sessions()
+
+    # === USER STATUS METHODS ===
+    
+    async def disable_vaultplus_user(self, user_id: str) -> Dict[str, Any]:
+        """Disable a user account."""
+        return await self.api.toggle_user_status(user_id, disabled=True)
+
+    async def enable_vaultplus_user(self, user_id: str) -> Dict[str, Any]:
+        """Enable a user account."""
+        return await self.api.toggle_user_status(user_id, disabled=False)
+
+    # === DOWNLOAD PERMISSION METHODS ===
+    
+    async def disable_downloads(self, user_id: str) -> Dict[str, Any]:
+        """Disable content downloading for a user."""
+        return await self.api.toggle_downloads(user_id, disabled=True)
+
+    async def enable_downloads(self, user_id: str) -> Dict[str, Any]:
+        """Enable content downloading for a user."""
+        return await self.api.toggle_downloads(user_id, disabled=False)
+
+    # === PASSWORD METHODS ===
+    
+    async def reset_password(self, user_id: str) -> Dict[str, Any]:
+        """Reset a user password."""
+        return await self.api.reset_password(user_id)
+
+    # === USER LINKING METHODS (delegate to HotLinkManager) ===
+    
+    async def get_jellyfin_user_id(self, discord_id: str) -> Optional[str]:
+        """Get Jellyfin user ID for a Discord user."""
         return await self.linker.get_jellyfin_user_id(discord_id)
 
-    async def get_jellyfin_user_by_discord_id(self, discord_id: str) -> dict | None:
-        """Get full Jellyfin user object for a Discord user"""
+    async def get_jellyfin_user_by_discord_id(self, discord_id: str) -> Optional[Dict[str, Any]]:
+        """Get full Jellyfin user object for a Discord user."""
         jellyfin_id = await self.get_jellyfin_user_id(discord_id)
         if not jellyfin_id:
             return None
